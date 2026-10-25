@@ -1,0 +1,15 @@
+{
+  "name": "simple-ragdoll",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "examples": "node scripts/examples.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jszip": "3.10.1",
+    "three": "0.170.0"
+  }
+}

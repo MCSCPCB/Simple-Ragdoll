@@ -1,0 +1,6 @@
+node_modules/
+test/
+.test-output/
+/scripts/cdp.mjs
+/scripts/test-blockbench.mjs
+/scripts/test-spatial.mjs
