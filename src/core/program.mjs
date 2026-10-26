@@ -57,11 +57,36 @@ export function poseCapture(rig,normalScale) {
   return [A("v.pose_valid",1),A("v.pose_scale",normalScale),A("v.pose_yaw","q.body_y_rotation"),
     rig.bodies.map((body,i)=>[
       A("t.bone",`q.bone_orientation_trs('${body.bone.toLowerCase()}')`),
-      axes.map(k=>A(`v.pose${i}t${k}`,`t.bone.t.${k}`)),
-      axes.map(k=>A(`v.pose${i}s${k}`,`t.bone.s.${k}`)),
-      modelQuaternion(`v.pose${i}q`,axes.map(k=>`t.bone.r.${k}`)),
-      If(axes.map(k=>`math.abs(t.bone.s.${k})<0.000001`).join("||"),A("v.pose_valid",0)),
+      // Zero scale hides bones, but its singular matrix has no usable rotation.
+      // Do not read that rotation until all three scale axes are nonzero.
+      A(`v.pose${i}hidden`,`!(${axes.map(k=>`math.abs(t.bone.s.${k})>=0.000001`).join("&&")})`),
+      If(`!v.pose${i}hidden`,[
+        axes.map(k=>A(`v.pose${i}t${k}`,`t.bone.t.${k}`)),
+        axes.map(k=>A(`v.pose${i}s${k}`,`t.bone.s.${k}`)),
+        modelQuaternion(`v.pose${i}q`,axes.map(k=>`t.bone.r.${k}`)),
+      ]),
     ])];
+}
+
+export function hiddenPoseFallback(rig) {
+  const order=[],seen=new Set();
+  const visit=i=>{if(seen.has(i))return;seen.add(i);const parent=rig.bodies[i].parent;if(parent>=0)visit(parent);order.push(i);};
+  rig.bodies.forEach((_,i)=>visit(i));
+  // Resolve parents first, even when configuration body order differs from bone order.
+  return order.map(i=>{
+    const body=rig.bodies[i],p=`v.pose${i}`,parent=body.parent,ancestor=rig.bodies[parent];
+    return If(p+'hidden',[
+      ...(parent>=0?[copy('t.fallback_q',`v.pose${parent}q`,quat),copy('t.fallback_t',`v.pose${parent}t`),copy(p+'s',`v.pose${parent}s`)]:[
+        quaternion('t.fallback_q',[0,0,0,1]),vector('t.fallback_t',[0,0,0]),vector(p+'s',[1,1,1]),
+      ]),
+      quaternion('t.fallback_chain',body.parentTransform.q),vector('t.fallback_pivot',body.pivot),
+      rotate('t.fallback_pivot','t.fallback_chain','t.fallback_pivot'),
+      axes.map((k,j)=>A('t.fallback_pivot'+k,`(t.fallback_pivot${k}+(${body.parentTransform.t[j]})-(${ancestor?.pivot[j]??0}))*${p}s${k}`)),
+      rotate('t.fallback_pivot','t.fallback_q','t.fallback_pivot'),add(p+'t','t.fallback_t','t.fallback_pivot'),
+      modelQuaternion('t.fallback_local',body.bindRotation),multiply('t.fallback_local','t.fallback_chain','t.fallback_local'),
+      multiply(p+'q','t.fallback_q','t.fallback_local'),
+    ]);
+  });
 }
 
 function gaussian(out,amount) {
@@ -141,7 +166,7 @@ export function createProgram(rig, {preview=false,reservedNames=[],id="generated
     axes.map(k=>A("v.input_"+k,`v.has_position?(v.e${k}-v.last_${k})/math.max(q.delta_time,0.001):0`)),copy("v.last_","v.e"),A("v.has_position",1),
     input.frame,
     If(`v.active&&(v.ragdoll_control_mode==2||(v.ragdoll_control_mode==0&&(${rig.release})))`,[A("v.active",0),A("v.accum",0),A("v.pose_valid",0),A("v.frames",0)]),
-    If("!v.active",[A("v.variant",variant),If("v.frames>0",poseCapture(rig,rig.scale)),
+    If("!v.active",[A("v.variant",variant),If("v.frames>0",[poseCapture(rig,rig.scale),hiddenPoseFallback(rig)]),
       If(`(v.ragdoll_control_mode==1||v.ragdoll_control_mode==3||(v.ragdoll_control_mode==0&&(${rig.trigger})))&&v.pose_valid`,activate(rig)),A("v.frames","v.frames+1")]),
     input.properties,input.motion,
     If("v.active&&!v.activated&&v.ragdoll_control_mode!=3&&v.ragdoll_simulation_time_scale>0",[A("v.accum",`math.min(v.accum+math.max(q.delta_time,0)*math.clamp(v.ragdoll_simulation_time_scale,0,2),${dt*3})`),A("v.steps",`math.floor(v.accum*${s.frequency}+0.00001)`),A("v.accum",`math.max(0,v.accum-v.steps*${dt})`),A("v.alpha",`math.clamp(v.accum*${s.frequency},0,1)`)]),
@@ -154,7 +179,7 @@ export function createProgram(rig, {preview=false,reservedNames=[],id="generated
     If(`v.sleep>=${sleepTicks}`,rig.bodies.map((_,i)=>[vector(`v.b${i}v`,[0,0,0]),vector(`v.b${i}w`,[0,0,0]),If("v.was_sleeping",copy(`v.b${i}`,`v.b${i}prev`,poseKeys),copy(`v.b${i}prev`,`v.b${i}`,poseKeys))]))];
   const anchors=rig.joints.map((j,i)=>[...["A","B"].map(side=>axes.map((k,n)=>A(`v.j${i}${side.toLowerCase()}${k}`,`v.j${i}base_${side.toLowerCase()}${k}+(${j['transitionAnchor'+side][n]})*math.max(0,1-v.age/${s.poseTransition})`)))]);
   const dynamics=[[anchors,d.prepareBodies()],d.bodyContacts(),d.terrainContacts(),d.sortContacts(),...d.solverChunks(),results.contacts,d.integrateBodies(),finish];
-  let frameBlocks=[compactBegin(rig,begin,poseCapture(rig,rig.scale),activate(rig)),
+  let frameBlocks=[compactBegin(rig,begin,poseCapture(rig,rig.scale),activate(rig),hiddenPoseFallback(rig)),
     ...Array.from({length:3},(_,i)=>[If('v.active&&v.steps>'+i,[tick,If('v.awake',dynamics)])]),
     [If('v.active',[interpolatedBodies(rig),compactOutput(rig,boneOutput)]),results.frame]];
   let rootOutputs=rig.bodies.map((_,i)=>boneOutput(rig,i));

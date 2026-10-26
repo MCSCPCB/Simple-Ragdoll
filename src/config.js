@@ -39,7 +39,7 @@ export function autoConfig(client,resources,variants){
   const largest=candidates.slice().sort((a,b)=>volume(b)-volume(a))[0];
   const byName=new Map(first.bones.map(b=>[b.name,b]));
   for(const bone of first.bones){const seen=new Set();let b=bone;while(b){if(seen.has(b.name))fail('bone_cycle',[b.name]);seen.add(b.name);if(b.parent&&!byName.has(b.parent))fail('bone_missing',[b.parent]);b=byName.get(b.parent);}}
-  const decorative=/(?:nose|hat|brim|eyebrow|eyelash|teeth|tooth|finger|decoration|accessory)/i;
+  const decorative=/(?:nose|hat|brim|eyebrow|eyelash|teeth|tooth|finger|thumb|decoration|accessory)/i;
   const chosen=candidates.filter(b=>b===largest||!decorative.test(b.name)&&!(byName.has(b.parent)&&volume(b)<volume(byName.get(b.parent))*.04)).sort((a,b)=>volume(b)-volume(a)).slice(0,32);
   for(const bone of first.bones){
     if(!chosen.includes(bone))continue;

@@ -3,7 +3,7 @@ import {mergeGroups} from './merge.mjs';
 function rewrite(nodes,replace){
  return [nodes].flat(Infinity).map(n=>n.kind==='set'?A(replace(n.name),typeof n.value==='string'?replace(n.value):n.value):n.kind==='if'?If(replace(n.test),rewrite(n.yes,replace),rewrite(n.no,replace)):Loop(typeof n.count==='string'?replace(n.count):n.count,rewrite(n.body,replace)));
 }
-export function compactBegin(rig,original,capture,act){
+export function compactBegin(rig,original,capture,act,fallback=[]){
  const index='t.activation_index',bodies=rig.bodies,bodyIds=bodies.map((_,i)=>i),joints=rig.joints,jointIds=joints.map((_,i)=>i);
  const captureGroups=capture.at(-1).map((g,i)=>rewrite(g,s=>s.replace(new RegExp('v\\.pose'+i+'([a-z]\\w*)','g'),'v.capture_pose.$1')));
  const newCapture=[capture.slice(0,-1),A(index,0),Loop(bodies.length,[A('v.capture_pose',0),mergeGroups(captureGroups,index),dispatch(index,bodyIds,i=>A('v.pose'+i,'v.capture_pose')),A(index,index+'+1')])];
@@ -23,7 +23,7 @@ export function compactBegin(rig,original,capture,act){
  act[act.length-1]=bodyGroup(act.at(-1),false);
  const begin=structuredClone(original);
  const inactive=begin.find(n=>n.kind==='if'&&n.test==='!v.active');
- inactive.yes.find(n=>n.kind==='if'&&n.test==='v.frames>0').yes=newCapture.flat(Infinity);
+ inactive.yes.find(n=>n.kind==='if'&&n.test==='v.frames>0').yes=[newCapture,fallback].flat(Infinity);
  inactive.yes.find(n=>n.kind==='if'&&n.test!=='v.frames>0').yes=act.flat(Infinity);
  return begin;
 }

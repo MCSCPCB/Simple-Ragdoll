@@ -19,9 +19,11 @@ export function adaptClient(original,rig,program,id){
   const atLeast=(version,min)=>version.split('.').map(Number).reduce((a,n,i)=>a||Math.sign(n-(min[i]??0)),0)<0?min.join('.'):version;
   result.format_version=atLeast(String(result.format_version??'1.10.0'),[1,20,60]);c.min_engine_version=atLeast(String(c.min_engine_version??'1.10.0'),[1,26,0]);
   const alias=g=>Object.entries(c.geometry).find(([,value])=>value===g)?.[0];
-  let query=`geometry.${alias(rig.variants.at(-1).geometry)}`;
-  for(let i=rig.variants.length-2;i>=0;i--)query=`(${rig.variants[i].when})?geometry.${alias(rig.variants[i].geometry)}:(${query})`;
-  c.queryable_geometry=query;
+  // This field takes a geometry alias, not a Molang geometry expression.
+  const queryModels=new Set(rig.variants.map(v=>v.geometry));
+  if(queryModels.size===1)c.queryable_geometry=alias(rig.variants[0].geometry);
+  // Multiple models retain a valid original alias, or use the engine's rendered geometry.
+  else if(!queryModels.has(c.geometry[c.queryable_geometry]))delete c.queryable_geometry;
   const condition=entry=>typeof entry==='string'?{[entry]:'!v.ragdoll_active'}:Object.fromEntries(Object.entries(entry).map(([name,value])=>[name,`(!v.ragdoll_active)*(${typeof value==='boolean'?Number(value):value})`]));
   const compute=program.computeOrder.map((id,i)=>{
     const alias='ragdoll_compute_'+i;if(alias in animations)fail('alias',[alias]);

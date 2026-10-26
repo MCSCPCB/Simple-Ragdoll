@@ -53,8 +53,9 @@ export function splitStatements(nodes, source, {limit = 64000, target = limit - 
       if (size > budget) {
         flush();
         if (node.kind === 'loop' && Number.isInteger(Number(node.count)) && Number(node.count) >= 0 && Number(node.count) <= 4096) {
-          // 超长定次数循环按原顺序展开，再保留分段间的临时值。
-          result.push(...partition(Array.from({length:Number(node.count)},()=>node.body).flat(),budget));
+          // 循环体只分段一次，重复引用同一组计算段，供导出时复用动画。
+          const body = partition(node.body,budget);
+          for(let i=0;i<Number(node.count);i++)result.push(...body);
           continue;
         }
         if (node.kind !== 'if') fail('chunk', [size, budget]);
@@ -63,7 +64,11 @@ export function splitStatements(nodes, source, {limit = 64000, target = limit - 
         result.push([A(flag, `(${node.test})?1:0`)]);
         for (const [test, branch] of [[flag, node.yes], [`!${flag}`, node.no]]) {
           const overhead = source([If(test, [])]).length;
-          result.push(...partition(branch, budget - overhead).map(part => [If(test, part)]));
+          const guarded = new Map();
+          result.push(...partition(branch, budget - overhead).map(part => {
+            if(!guarded.has(part))guarded.set(part,[If(test,part)]);
+            return guarded.get(part);
+          }));
         }
       } else {
         if (batch.length && estimate + size > Math.min(target, budget)) flush();
@@ -79,7 +84,11 @@ export function splitStatements(nodes, source, {limit = 64000, target = limit - 
     if (!shared.size) break;
     // t 变量不跨表达式保留；仅提升后续计算段仍会读取的临时值。
     const replacements = new Map([...shared].map(name => [name, `v.${prefix}_temp${temporary++}`]));
-    chunks = chunks.flatMap(chunk => partition(replaceTemporaries(chunk, replacements)));
+    const cache = new Map();
+    chunks = chunks.flatMap(chunk => {
+      if(!cache.has(chunk))cache.set(chunk,partition(replaceTemporaries(chunk,replacements)));
+      return cache.get(chunk);
+    });
   }
   return chunks;
 }

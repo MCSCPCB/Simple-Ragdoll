@@ -16,5 +16,5 @@ export function createSimulation(config, resources, client, poses) {
   compile.prepare(scope);
   const step=dt=>{q.delta_time=dt;q.life_time+=dt;for(const run of steps){compile.resetTemps(scope);run(scope);}for(const run of roots)if(run){compile.resetTemps(scope);run(scope);}};
   initialize(scope);step(0);q.health=19;step(0);
-  return {rig,scope,step,transforms(){return rig.bodies.map((body,i)=>({bone:body.bone,position:['x','y','z'].map(k=>scope.v[`out${i}p${k}`]),rotation:['x','y','z'].map(k=>scope.v[`out${i}r${k}`])}));}};
+  return {rig,scope,step,transforms(){return rig.bodies.map((body,i)=>({bone:body.bone,position:['x','y','z'].map(k=>scope.v[`out${i}p${k}`]),rotation:['x','y','z'].map(k=>scope.v[`out${i}r${k}`]),scale:Array(3).fill(1-scope.v[`pose${i}hidden`])}));}};
 }
