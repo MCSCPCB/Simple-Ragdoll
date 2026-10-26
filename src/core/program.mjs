@@ -4,6 +4,9 @@ import { minifier } from "./minify.mjs";
 import { splitStatements } from "./chunks.mjs";
 import { A, If, axes, quat, set, vector, copy, add, sub, scale, dot, rotate, multiply, normalize, axisRotation, emit } from "./expression.mjs";
 import { createDynamics } from "./dynamics.mjs";
+import { createInputs } from "./input.mjs";
+import { createLiquids } from "./liquids.mjs";
+import { createResults } from "./results.mjs";
 
 const quaternion=(out,values)=>quat.map((k,i)=>A(out+k,values[i]));
 const inverse=(out,q)=>[scale(out,q,-1),A(out+"w",q+"w")];
@@ -106,31 +109,33 @@ export function boneOutput(rig,index) {
 }
 
 export function createProgram(rig, {preview=false,reservedNames=[]}={}) {
-  const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),d=createDynamics(rig,s),poseKeys=[...axes,...quat.map(k=>"q"+k)];
+  const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),d=createDynamics(rig,s),input=createInputs(rig),liquids=createLiquids(rig),results=createResults(rig,reservedNames),poseKeys=[...axes,...quat.map(k=>"q"+k)];
   let variant=String(rig.variants.length-1);
   for(let i=rig.variants.length-2;i>=0;i--)variant=`(${rig.variants[i].when})?${i}:(${variant})`;
   let initialize=[set("v.",{active:0,activated:0,variant:0,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0,has_position:0,pose_valid:0,frames:0,model_scale:1}),
-    vector("v.last_",[0,0,0]),anchor.initialize,
+    vector("v.last_",[0,0,0]),anchor.initialize,input.initialize,liquids.initialize,results.initialize,
     rig.bodies.map((_,i)=>[set(`v.b${i}`,Object.fromEntries([...poseKeys,...poseKeys.map(k=>"prev"+k),...poseKeys.map(k=>"old"+k),...axes.flatMap(k=>["v"+k,"w"+k])].map(k=>[k,k.endsWith("qw")?1:0]))),
       vector(`v.render${i}`,[0,0,0]),quaternion(`v.render${i}q`,[0,0,0,1])]),d.initializeDynamics()];
   const begin=[axes.map((k,i)=>A("v.e"+k,`q.position(${i})`)),anchor.frame,A("v.steps",0),A("v.activated",0),
     axes.map(k=>A("v.input_"+k,`v.has_position?(v.e${k}-v.last_${k})/math.max(q.delta_time,0.001):0`)),copy("v.last_","v.e"),A("v.has_position",1),
-    If(`v.active&&(${rig.release})`,[A("v.active",0),A("v.accum",0),A("v.pose_valid",0),A("v.frames",0)]),
+    input.frame,
+    If(`v.active&&(v.ragdoll_control_mode==2||(v.ragdoll_control_mode==0&&(${rig.release})))`,[A("v.active",0),A("v.accum",0),A("v.pose_valid",0),A("v.frames",0)]),
     If("!v.active",[A("v.variant",variant),If("v.frames>0",poseCapture(rig,rig.scale)),
-      If(`(${rig.trigger})&&v.pose_valid`,activate(rig)),A("v.frames","v.frames+1")]),
-    If("v.active&&!v.activated",[A("v.accum",`math.min(v.accum+math.max(q.delta_time,0),${dt*3})`),A("v.steps",`math.floor(v.accum*${s.frequency}+0.00001)`),A("v.accum",`math.max(0,v.accum-v.steps*${dt})`),A("v.alpha",`math.clamp(v.accum*${s.frequency},0,1)`)]),
+      If(`(v.ragdoll_control_mode==1||v.ragdoll_control_mode==3||(v.ragdoll_control_mode==0&&(${rig.trigger})))&&v.pose_valid`,activate(rig)),A("v.frames","v.frames+1")]),
+    input.properties,input.motion,
+    If("v.active&&!v.activated&&v.ragdoll_control_mode!=3&&v.ragdoll_simulation_time_scale>0",[A("v.accum",`math.min(v.accum+math.max(q.delta_time,0)*math.clamp(v.ragdoll_simulation_time_scale,0,2),${dt*3})`),A("v.steps",`math.floor(v.accum*${s.frequency}+0.00001)`),A("v.accum",`math.max(0,v.accum-v.steps*${dt})`),A("v.alpha",`math.clamp(v.accum*${s.frequency},0,1)`)]),
   ];
   const sleepTicks=Math.max(1,Math.round(s.sleep.seconds*s.frequency)),checkTicks=Math.max(1,Math.round(s.sleep.checkInterval*s.frequency));
   const tick=[A("v.tick","v.tick+1"),A("v.age",`v.age+${dt}`),rig.bodies.map((_,i)=>copy(`v.b${i}prev`,`v.b${i}`,poseKeys)),
-    A("v.was_sleeping",`v.sleep>=${sleepTicks}`),A("v.awake",`v.sleep<${sleepTicks}||math.mod(v.tick,${checkTicks})==0`)];
+    input.forces,liquids.step,results.liquids,A("v.was_sleeping",`v.sleep>=${sleepTicks}`),A("v.awake",`v.sleep<${sleepTicks}||math.mod(v.tick,${checkTicks})==0`)];
   const finish=[A("t.motion",rig.bodies.map((_,i)=>`(${dot(`v.b${i}v`,`v.b${i}v`)})`).reduce((a,b)=>`math.max(${a},${b})`)),
     A("v.sleep",`v.support&&t.motion<${s.sleep.speed**2}?math.min(${sleepTicks},v.sleep+1):math.max(0,v.sleep-1/3)`),
     If(`v.sleep>=${sleepTicks}`,rig.bodies.map((_,i)=>[vector(`v.b${i}v`,[0,0,0]),vector(`v.b${i}w`,[0,0,0]),If("v.was_sleeping",copy(`v.b${i}`,`v.b${i}prev`,poseKeys),copy(`v.b${i}prev`,`v.b${i}`,poseKeys))]))];
   const anchors=rig.joints.map((j,i)=>[...["A","B"].map(side=>axes.map((k,n)=>A(`v.j${i}${side.toLowerCase()}${k}`,`v.j${i}base_${side.toLowerCase()}${k}+(${j['transitionAnchor'+side][n]})*math.max(0,1-v.age/${s.poseTransition})`)))]);
-  const dynamics=[[anchors,d.prepareBodies()],d.bodyContacts(),d.terrainContacts(),d.sortContacts(),...d.solverChunks(),d.integrateBodies(),finish];
+  const dynamics=[[anchors,d.prepareBodies()],d.bodyContacts(),d.terrainContacts(),d.sortContacts(),...d.solverChunks(),results.contacts,d.integrateBodies(),finish];
   let frameBlocks=[compactBegin(rig,begin,poseCapture(rig,rig.scale),activate(rig)),
     ...Array.from({length:3},(_,i)=>[If('v.active&&v.steps>'+i,[tick,If('v.awake',dynamics)])]),
-    [If('v.active',[interpolatedBodies(rig),compactOutput(rig,boneOutput)])]];
+    [If('v.active',[interpolatedBodies(rig),compactOutput(rig,boneOutput)]),results.frame]];
   let rootOutputs=rig.bodies.map((_,i)=>boneOutput(rig,i));
   const lowered=lowerRecords({initialize:groupVariables(initialize),frame:frameBlocks.map(groupVariables),rootOutputs:rootOutputs.map(groupVariables)});
   initialize=lowered.initialize;frameBlocks=lowered.frame;rootOutputs=lowered.rootOutputs;

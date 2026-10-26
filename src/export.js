@@ -1,6 +1,7 @@
 import { OUTPUT_LEVELS } from './core/model.mjs';
 import { outputModel } from './core/output.mjs';
 import { createProgram } from './core/program.mjs';
+import { INPUT_ANIMATION } from './core/input.mjs';
 import { parseJson } from './resources.js';
 import { clone } from './config.js';
 import { fail } from './i18n.js';
@@ -12,7 +13,8 @@ export function adaptClient(original,rig,program,id){
     const alias=`ragdoll_original_${i}_${name}`;animations[alias]=value;animate.push(alias);
   }
   const key='ragdoll_generated';if(key in animations)fail('alias',[key]);
-  animations[key]=id;delete c.animation_controllers;c.animations=animations;
+  if('ragdoll_input' in animations)fail('alias',['ragdoll_input']);
+  animations[key]=id;animations.ragdoll_input=INPUT_ANIMATION;delete c.animation_controllers;c.animations=animations;
   const atLeast=(version,min)=>version.split('.').map(Number).reduce((a,n,i)=>a||Math.sign(n-(min[i]??0)),0)<0?min.join('.'):version;
   result.format_version=atLeast(String(result.format_version??'1.10.0'),[1,20,60]);c.min_engine_version=atLeast(String(c.min_engine_version??'1.10.0'),[1,26,0]);
   const alias=g=>Object.entries(c.geometry).find(([,value])=>value===g)?.[0];
@@ -55,6 +57,7 @@ export async function generatePack(resources,rows,options,Zip,onProgress=()=>{})
   const selected=rows.filter(r=>r.selected);if(!selected.length)fail('selection');
   const zip=new Zip(),reports=[],updates=new Map();
   const set=(path,value)=>updates.set(path,JSON.stringify(value));
+  set('animations/simple_ragdoll_input.animation.json',{format_version:'1.8.0',animations:{[INPUT_ANIMATION]:{loop:true,animation_length:1}}});
   for(const [index,row] of selected.entries()){
     onProgress(row.id,index,selected.length);await new Promise(resolve=>setTimeout(resolve,0));
     if(!row.config)fail('not_configured',[row.id]);

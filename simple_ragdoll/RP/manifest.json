@@ -1,0 +1,16 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Simple Ragdoll",
+    "description": "Ragdoll",
+    "uuid": "8cf9afbc-0ad2-44db-b159-f9322ab90306",
+    "version": [0, 1, 0],
+    "min_engine_version": [1, 26, 0]
+  },
+  "modules": [
+    { "type": "resources", "uuid": "1fcd3bab-2dd1-453f-afed-0dd025e9dbe4", "version": [0, 1, 0] }
+  ],
+  "dependencies": [
+    { "uuid": "57ca1d60-e3f4-4643-b975-681e271034c5", "version": [0, 1, 0] }
+  ]
+}

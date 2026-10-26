@@ -19,7 +19,7 @@ export function minifier({frequencyText='',reservedNames=[],externalNames=[]}={}
   let count=0;
   const variable=name=>{
     if(roots.has(name))return roots.get(name);
-    let output=external.has(name)?name:publicNames.get(name);
+    let output=external.has(name)||name.startsWith('v.ragdoll_')?name:publicNames.get(name);
     if(!output)do{output='v.'+short(count++);}while(reserved.has(output));
     roots.set(name,output);return output;
   };
