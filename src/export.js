@@ -1,6 +1,7 @@
 import { OUTPUT_LEVELS } from './core/model.mjs';
 import { outputModel } from './core/output.mjs';
 import { createProgram } from './core/program.mjs';
+import { compilePrograms, sharingKey } from './core/compute.mjs';
 import { INPUT_ANIMATION } from './core/input.mjs';
 import { parseJson } from './resources.js';
 import { clone } from './config.js';
@@ -22,7 +23,11 @@ export function adaptClient(original,rig,program,id){
   for(let i=rig.variants.length-2;i>=0;i--)query=`(${rig.variants[i].when})?geometry.${alias(rig.variants[i].geometry)}:(${query})`;
   c.queryable_geometry=query;
   const condition=entry=>typeof entry==='string'?{[entry]:'!v.ragdoll_active'}:Object.fromEntries(Object.entries(entry).map(([name,value])=>[name,`(!v.ragdoll_active)*(${typeof value==='boolean'?Number(value):value})`]));
-  c.scripts={...s,initialize:[...(s.initialize??[]),...program.initializeSources],pre_animation:[...(s.pre_animation??[]),...program.frameSources],animate:[...animate.map(condition),{[key]:'v.ragdoll_active'}],should_update_bones_and_effects_offscreen:true};
+  const compute=program.computeOrder.map((id,i)=>{
+    const alias='ragdoll_compute_'+i;if(alias in animations)fail('alias',[alias]);
+    animations[alias]=id;return alias;
+  });
+  c.scripts={...s,initialize:[...(s.initialize??[]),...program.initializeSources],pre_animation:[...(s.pre_animation??[]),...program.preAnimationSources],animate:[...compute,...animate.map(condition),{[key]:'v.ragdoll_active'}],should_update_bones_and_effects_offscreen:true};
   return result;
 }
 
@@ -32,11 +37,42 @@ export function resourceVariables(resources,original){
   return [...names];
 }
 
+const animationFile=animations=>JSON.stringify({format_version:'1.20.60',animations});
+const inputFile=JSON.stringify({format_version:'1.8.0',animations:{[INPUT_ANIMATION]:{loop:true,animation_length:1}}});
+const byteLength=text=>new TextEncoder().encode(text).byteLength;
+
+export function generateEntities(resources,entities){
+  const reservedNames=[...new Set([...resourceVariables(resources),...entities.flatMap(e=>resourceVariables({},e.original))])];
+  const entries=entities.map(({config,original})=>{
+    const client=original['minecraft:client_entity'].description,rig=outputModel(config,resources,client);
+    return {original,rig,name:client.identifier.replaceAll(':','_'),...createProgram(rig,{preview:true,reservedNames})};
+  });
+  const finish=(entry,program)=>{
+    const {original,rig,name}=entry,animationId=`animation.ragdoll.${name}`;
+    const definition=JSON.stringify(adaptClient(original,rig,program,animationId));
+    const animation=animationFile({[animationId]:program.animation()});
+    return {rig,program,name,animationId,definition,animation,bytes:byteLength(definition)+byteLength(animation)};
+  };
+  const compile=entries=>compilePrograms(entries,{reservedNames}).map((program,i)=>finish(entries[i],program));
+  const size=records=>records.reduce((n,r)=>n+r.bytes,0)+byteLength(animationFile(records[0].program.computeAnimations));
+  const groups=new Map();
+  for(const entry of entries){const key=sharingKey(entry.rig);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
+  const generated=new Map();
+  for(const group of groups.values()){
+    let results=group.map(entry=>compile([entry]));
+    if(group.length>1){const shared=compile(group);if(size(shared)<results.reduce((n,r)=>n+size(r),0))results=[shared];}
+    for(const records of results){
+      const bytes=byteLength(animationFile(records[0].program.computeAnimations));
+      records.forEach((record,i)=>{record.bytes+=Math.floor(bytes/records.length)+(i<bytes%records.length?1:0);generated.set(record.name,record);});
+    }
+  }
+  const result=entries.map(entry=>generated.get(entry.name)),inputBytes=byteLength(inputFile);
+  result.forEach((record,i)=>{record.bytes+=Math.floor(inputBytes/result.length)+(i<inputBytes%result.length?1:0);});
+  return result;
+}
+
 export function generateEntity(resources,config,original){
-  const client=original['minecraft:client_entity'].description,rig=outputModel(config,resources,client);
-  const program=createProgram(rig,{reservedNames:resourceVariables(resources,original)}),name=client.identifier.replaceAll(':','_'),animationId=`animation.ragdoll.${name}`;
-  const definition=JSON.stringify(adaptClient(original,rig,program,animationId));
-  return {rig,program,name,animationId,definition,bytes:new TextEncoder().encode(definition).byteLength};
+  return generateEntities(resources,[{config,original}])[0];
 }
 
 export async function estimateOutputLevels(resources,config,original,{cancelled=()=>false,update=()=>{}}={}){
@@ -57,16 +93,24 @@ export async function generatePack(resources,rows,options,Zip,onProgress=()=>{})
   const selected=rows.filter(r=>r.selected);if(!selected.length)fail('selection');
   const zip=new Zip(),reports=[],updates=new Map();
   const set=(path,value)=>updates.set(path,JSON.stringify(value));
-  set('animations/simple_ragdoll_input.animation.json',{format_version:'1.8.0',animations:{[INPUT_ANIMATION]:{loop:true,animation_length:1}}});
+  updates.set('animations/simple_ragdoll_input.animation.json',inputFile);
+  const entities=[];
   for(const [index,row] of selected.entries()){
     onProgress(row.id,index,selected.length);await new Promise(resolve=>setTimeout(resolve,0));
     if(!row.config)fail('not_configured',[row.id]);
     const record=resources.clients.get(row.id);if(!record)fail('entity_missing',[row.id]);
     if(/v\.(ragdoll_|rg[a-z0-9]+\b)/.test(JSON.stringify(record.value)))fail('already_generated',[row.id]);
-    const {rig,program,name,animationId,definition,bytes}=generateEntity(resources,row.config,record.value);
+    entities.push({config:row.config,original:record.value,record,row});
+  }
+  const generated=generateEntities(resources,entities);
+  for(const [index,{rig,program,name,animationId,definition,animation,bytes}] of generated.entries()){
+    const {record,row}=entities[index];
     if(resources.animations.has(animationId))fail('alias',[animationId]);
+    for(const id of Object.keys(program.computeAnimations))if(resources.animations.has(id))fail('alias',[id]);
     updates.set(record.file,definition);
-    set(`animations/ragdoll_${name}.animation.json`,{format_version:'1.20.60',animations:{[animationId]:program.animation()}});
+    updates.set(`animations/ragdoll_${name}.animation.json`,animation);
+    const computeFile=`animations/ragdoll_${program.computeName}.compute.json`;
+    if(!updates.has(computeFile))updates.set(computeFile,animationFile(program.computeAnimations));
     reports.push({id:row.id,bodies:rig.bodies.length,boxes:rig.shapes.length,joints:rig.joints.length,bytes});
   }
   const manifest=clone(resources.json.get('manifest.json')??{format_version:2,header:{},modules:[]});

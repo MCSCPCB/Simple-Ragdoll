@@ -1,32 +1,5 @@
 import {A,If,Loop,choose,dispatch,axes,quat} from './expression.mjs';
-import {parseExpression} from './parse.mjs';
-const expr=e=>e.kind==='value'?typeof e.value==='string'?"'"+e.value+"'":String(e.value):e.kind==='read'?e.path.join('.'):e.kind==='call'?e.path.join('.')+'('+e.args.map(expr).join(',')+')':e.kind==='unary'?'('+e.op+expr(e.value)+')':e.kind==='binary'?'('+expr(e.left)+e.op+expr(e.right)+')':'('+expr(e.test)+'?'+expr(e.yes)+':'+expr(e.no)+')';
-const same=a=>a.every(x=>JSON.stringify(x)===JSON.stringify(a[0]));
-function mergeExpr(values,index){
- if(same(values))return expr(values[0]);
- const first=values[0],kind=first.kind;
- if(values.some(v=>v.kind!==kind))return choose(index,values.map(expr));
- if(kind==='binary'&&values.every(v=>v.op===first.op))return '('+mergeExpr(values.map(v=>v.left),index)+first.op+mergeExpr(values.map(v=>v.right),index)+')';
- if(kind==='unary'&&values.every(v=>v.op===first.op))return '('+first.op+mergeExpr(values.map(v=>v.value),index)+')';
- if(kind==='call'&&values.every(v=>v.path.join('.')===first.path.join('.')&&v.args.length===first.args.length))return first.path.join('.')+'('+first.args.map((_,i)=>mergeExpr(values.map(v=>v.args[i]),index)).join(',')+')';
- if(kind==='if')return '('+mergeExpr(values.map(v=>v.test),index)+'?'+mergeExpr(values.map(v=>v.yes),index)+':'+mergeExpr(values.map(v=>v.no),index)+')';
- return choose(index,values.map(expr));
-}
-function mergeGroups(groups,index){
- if(!groups.length)return [];
- groups=groups.map(g=>[g].flat(Infinity));
- if(groups.some(g=>g.length!==groups[0].length))throw new Error('Different block lengths');
- const merge=values=>same(values)?values[0]:mergeExpr(values.map(parseExpression),index);
- return groups[0].map((first,i)=>{
-  const nodes=groups.map(g=>g[i]);if(nodes.some(n=>n.kind!==first.kind))throw new Error('Different nodes');
-  if(first.kind==='set'){
-   if(!nodes.every(n=>n.name===first.name))throw new Error('Different targets '+nodes.map(n=>n.name));
-   return A(first.name,merge(nodes.map(n=>n.value)));
-  }
-  if(first.kind==='if')return If(merge(nodes.map(n=>n.test)),mergeGroups(nodes.map(n=>n.yes),index),mergeGroups(nodes.map(n=>n.no),index));
-  return Loop(merge(nodes.map(n=>n.count)),mergeGroups(nodes.map(n=>n.body),index));
- });
-}
+import {mergeGroups} from './merge.mjs';
 function rewrite(nodes,replace){
  return [nodes].flat(Infinity).map(n=>n.kind==='set'?A(replace(n.name),typeof n.value==='string'?replace(n.value):n.value):n.kind==='if'?If(replace(n.test),rewrite(n.yes,replace),rewrite(n.no,replace)):Loop(typeof n.count==='string'?replace(n.count):n.count,rewrite(n.body,replace)));
 }

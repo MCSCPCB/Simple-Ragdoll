@@ -1,8 +1,7 @@
 import { compactBegin, compactOutput } from "./compact.mjs";
 import { groupVariables, lowerRecords } from "./storage.mjs";
-import { minifier } from "./minify.mjs";
-import { splitStatements } from "./chunks.mjs";
-import { A, If, axes, quat, set, vector, copy, add, sub, scale, dot, rotate, multiply, normalize, axisRotation, emit } from "./expression.mjs";
+import { compilePrograms } from "./compute.mjs";
+import { A, If, axes, quat, set, vector, copy, add, sub, scale, dot, rotate, multiply, normalize, axisRotation } from "./expression.mjs";
 import { createDynamics } from "./dynamics.mjs";
 import { createInputs } from "./input.mjs";
 import { createLiquids } from "./liquids.mjs";
@@ -130,7 +129,7 @@ export function boneOutput(rig,index) {
   ];
 }
 
-export function createProgram(rig, {preview=false,reservedNames=[]}={}) {
+export function createProgram(rig, {preview=false,reservedNames=[],id="generated"}={}) {
   const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),death=deathPrograms(),d=createDynamics(rig,s),input=createInputs(rig),liquids=createLiquids(rig),results=createResults(rig,reservedNames),poseKeys=[...axes,...quat.map(k=>"q"+k)];
   let variant=String(rig.variants.length-1);
   for(let i=rig.variants.length-2;i>=0;i--)variant=`(${rig.variants[i].when})?${i}:(${variant})`;
@@ -162,20 +161,7 @@ export function createProgram(rig, {preview=false,reservedNames=[]}={}) {
   const lowered=lowerRecords({initialize:groupVariables(initialize),frame:frameBlocks.map(groupVariables),rootOutputs:rootOutputs.map(groupVariables)});
   initialize=lowered.initialize;frameBlocks=lowered.frame;rootOutputs=lowered.rootOutputs;
   if(preview)return {initialize,frameChunks:frameBlocks,rootOutputs};
-  const frequencyText=emit([initialize,frameBlocks,rig.bodies.flatMap((b,i)=>b.parent<0?Array.from({length:6},()=>rootOutputs[i]):[])]);
-  const assigned=new Set();
-  const visit=nodes=>{for(const n of nodes.flat(Infinity)){if(n.kind==="set")assigned.add(n.name);if(n.kind==="if"){visit(n.yes);visit(n.no);}if(n.kind==="loop")visit(n.body);}};
-  visit([initialize,frameBlocks,rootOutputs]);
-  const external=[...frequencyText.matchAll(/(?<![\w.])v\.\w+/g)].map(m=>m[0]).filter(name=>!assigned.has(name));
-  const namespace=minifier({frequencyText,reservedNames,externalNames:external});
-  const source=(nodes,target="molang")=>target==="molang"?namespace(emit(nodes)):emit(nodes,target);
-  const initializeChunks=splitStatements(initialize,source,{prefix:'init'});
-  const frameChunks=frameBlocks.flatMap((nodes,i)=>splitStatements(nodes,source,{prefix:`chunk${i}`}));
-  const animation=(target="molang")=>({loop:true,override_previous_animation:true,bones:Object.fromEntries(rig.bodies.map((body,i)=>[body.bone,{
-    position:axes.map(k=>{const value=target==="molang"?namespace(`v.out${i}p${k}`):`v.out${i}p${k}`;return body.parent<0?`${source(rootOutputs[i],target)}return ${value};`:value;}),
-    rotation:axes.map(k=>{const value=target==="molang"?namespace(`v.out${i}r${k}`):`v.out${i}r${k}`;return body.parent<0?`${source(rootOutputs[i],target)}return ${value};`:value;}),scale:[1,1,1],
-  }]))});
-  return {initialize,frameChunks,rootOutputs,source,animation,names:namespace.roots,initializeSources:initializeChunks.map(nodes=>source(nodes)),frameSources:frameChunks.map(nodes=>source(nodes))};
+  return compilePrograms([{name:id,rig,initialize,frameChunks:frameBlocks,rootOutputs}],{reservedNames})[0];
 }
 
 export const testMath={...Object.fromEntries(["sqrt","abs","min","max","floor","ln","pow"].map(k=>[k,k==="ln"?Math.log:Math[k]])),random:(a,b)=>a+(b-a)*Math.random(),
