@@ -45,15 +45,18 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
   // 每轮最后一段推进计数；同一组动画按顺序执行三次。
   stepChunks.at(-1).push(A(slot,slot+'+1'));
   const computation=carrier(stepChunks,'step');
+  const initialNodes=flatten(entries.map(e=>e.initialize)),initialLast=new Map();
+  initialNodes.forEach((n,i)=>{if(n.kind==='set')initialLast.set(n.name,i);});
+  const sharedInitial=initialNodes.filter((n,i)=>n.kind!=='set'||initialLast.get(n.name)===i);
+  const declared=assigned(sharedInitial);
   const programs=entries.map((entry,index)=>{
     const {rig,rootOutputs}=entry;
     const begin=split([entry.frameChunks[0],resets],'begin'+index);
     const finish=carrier(split(entry.frameChunks.at(-1),'output'+index),'output'+index);
     const execution=[...computation,...computation,...computation,...finish];
-    const declared=assigned(entries.map(e=>e.initialize));
     const extra=[...assigned([begin,execution.map(c=>c.nodes),rootOutputs])]
       .filter(n=>n.startsWith('v.')&&!declared.has(n)).map(n=>A(n,0));
-    const initialize=flatten([extra,entries.map(e=>e.initialize),entry.initialize,A(profile,index),resets]);
+    const initialize=flatten([extra,sharedInitial,entry.initialize,A(profile,index),resets]);
     const last=new Map();initialize.forEach((n,i)=>{if(n.kind==='set')last.set(n.name,i);});
     const initial=initialize.filter((n,i)=>n.kind!=='set'||last.get(n.name)===i);
     const initializeChunks=split(initial,'init'+index);

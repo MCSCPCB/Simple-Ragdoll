@@ -1,9 +1,9 @@
-import { t, fail, errorText } from '../i18n.js';
+import { t, fail, errorText, RagdollError } from '../i18n.js';
 import { importPack, parseJson, descriptionOf, relatedAnimations } from '../resources.js';
 import { clone, entityRows, autoConfig, selectModels } from '../config.js';
 import { normalizeModel } from '../core/model.mjs';
 import { modelRotation, sub } from '../core/math.mjs';
-import { generatePack, estimateOutputLevels, resourceVariables } from '../export.js';
+import { estimateOutputLevels, resourceVariables } from '../export.js';
 import * as rig from '../rig.js';
 import { Preview as SimulationPreview } from './preview.js';
 import { Overlay } from './overlay.js';
@@ -50,7 +50,7 @@ export class Controller {
     }finally{this.state.busy=false;this.state.progress='';}
   }
   choosePack(then){
-    const open=()=>Blockbench.import({type:t('pack'),extensions:['mcpack','zip'],readtype:'buffer'},files=>{if(files[0])this.safe(async()=>{await this.importFile(files[0]);then?.();});});
+    const open=()=>Blockbench.import({type:t('pack'),extensions:['mcpack','zip'],readtype:'buffer',resource_id:'simple_ragdoll_import_pack'},files=>{if(files[0])this.safe(async()=>{await this.importFile(files[0]);then?.();});});
     if(this.resources)Blockbench.showMessageBox({title:t('pack'),message:t('replace_pack'),buttons:[t('confirm'),t('cancel')]},button=>{if(button===0)open();});else open();
   }
   attachSavedProjects(){
@@ -476,7 +476,7 @@ export class Controller {
   resetPreview(){this.preview.reset();this.refresh();}
   importConfig(){
     const context=this.context();if(!context)return;
-    Blockbench.import({type:t('config'),extensions:['json'],readtype:'text'},files=>{if(!files[0])return;this.safe(()=>{
+    Blockbench.import({type:t('config'),extensions:['json'],readtype:'text',resource_id:'simple_ragdoll_import_config'},files=>{if(!files[0])return;this.safe(()=>{
       const config=parseJson(files[0].content,files[0].name);delete config.$schema;
       config.variants??=[{geometry:'default',scale:1}];config.joints??={};config.collisionPairs??=[];
       const shown=this.geometryId(context.data),variant=config.variants.findIndex(v=>(context.client.geometry[v.geometry]??v.geometry)===shown);
@@ -487,16 +487,36 @@ export class Controller {
       Undo.finishEdit(t('import_config'));this.propagate();this.refresh();
     });});
   }
-  exportConfig(){this.syncGeometry();const context=this.context();if(!context)return;Blockbench.export({type:t('config'),extensions:['json'],name:context.data.entity.replace(':','_')+'.physics',content:JSON.stringify(context.config,null,2)});}
+  exportConfig(){this.syncGeometry();const context=this.context();if(!context)return;Blockbench.export({type:t('config'),extensions:['json'],resource_id:'simple_ragdoll_export_config',name:context.data.entity.replace(':','_')+'.physics',content:JSON.stringify(context.config,null,2)});}
   async exportPack(options){
+    if(this.state.busy)return;
     this.preview.reset();this.syncGeometry();
     for(const project of ModelProject.all){const data=project.bedrock_ragdoll;if(data?.entity)for(const id of Object.keys(data.geometries))this.writeGeometry(data,id);}
     const rows=this.state.rows.filter(row=>row.selected&&row.status==='ready');if(!rows.length)fail('selection');
     this.state.busy=true;
     try{
-      const result=await generatePack(this.resources,rows,options,JSZip,(id,index,total)=>{this.state.progress=t('generating',[id])+` (${index+1}/${total})`;});
+      const result=await new Promise((resolve,reject)=>{
+        const url=URL.createObjectURL(new Blob([RAGDOLL_OUTPUT_WORKER],{type:'text/javascript'}));
+        let worker;
+        try{worker=new Worker(url);}finally{URL.revokeObjectURL(url);}
+        let settled=false;
+        const finish=(result,error)=>{if(settled)return;settled=true;worker.terminate();this.cancelExport=null;error?reject(error):resolve(result);};
+        this.cancelExport=()=>finish(null);
+        worker.onmessage=({data})=>{
+          if(data.progress){
+            const {id,index,total,stage}=data.progress;
+            this.state.progress=stage==='packing'?t('packing',[index]):stage==='sharing'?t('sharing',[id]):t('generating',[id])+` (${index+1}/${total})`;
+          }
+          if(data.error)finish(null,data.error.key?new RagdollError(data.error.key,data.error.values):new Error(data.error.message));
+          else if(data.result)finish(data.result);
+        };
+        worker.onerror=event=>{event.preventDefault();finish(null,new Error(event.message));};
+        worker.onmessageerror=()=>finish(null,new RagdollError('export_response'));
+        try{worker.postMessage({task:'export',resources:this.resources,rows:clone(rows),options});}catch(error){finish(null,error);}
+      });
+      if(!result)return;
       const content=new Blob([result.data],{type:'application/zip'});
-      Blockbench.export({type:t('export_title'),extensions:['mcpack'],savetype:'zip',name:options.name.replace(/[^\p{L}\p{N}_. -]/gu,'_'),content},()=>Blockbench.showQuickMessage(t('exported',[result.reports.length])));
+      Blockbench.export({type:t('export_title'),extensions:['mcpack'],savetype:'zip',resource_id:'simple_ragdoll_export_pack',name:options.name.replace(/[^\p{L}\p{N}_. -]/gu,'_'),content},()=>Blockbench.showQuickMessage(t('exported',[result.reports.length])));
     }finally{this.state.busy=false;this.state.progress='';}
   }
   propagate(){
@@ -518,5 +538,5 @@ export class Controller {
     if(Project?.bedrock_ragdoll?.entity&&['edit','ragdoll'].includes(Modes.selected?.id)){Animator.showDefaultPose();Project.model_3d?.updateMatrixWorld(true);}
     this.refresh();
   }
-  dispose(){this.outputRequest++;clearTimeout(this.outputTimer);this.outputWorker?.terminate();this.outputWorker=null;this.gizmo.dispose();this.preview.reset();this.overlay.clear();this.browser?.delete();}
+  dispose(){this.cancelExport?.();this.outputRequest++;clearTimeout(this.outputTimer);this.outputWorker?.terminate();this.outputWorker=null;this.gizmo.dispose();this.preview.reset();this.overlay.clear();this.browser?.delete();}
 }
