@@ -136,7 +136,9 @@ export function boneOutput(rig,index) {
     // model_scale is the actor's model-unit scale (normally 1/16), including
     // behavior-pack scaling. World-space anchor compensation must undo it too.
     // Preview has no actor scale query and uses the normal model-unit scale.
-    A('t.actor_scale','math.max(0.000001,(q.model_scale??0.0625)*16)'),
+    // Bedrock only accepts a variable on the left of ??, not a query.
+    A('t.actor_model_scale','q.model_scale'),
+    A('t.actor_scale','math.max(0.000001,(t.actor_model_scale??0.0625)*16)'),
     axes.map(k=>A("t.center"+k,`(v.o${k}-v.anchor_r${k})/t.actor_scale+v.render${i}${k}`)),
     rotate(out+"c","t.entity_inverse","t.center"),scale(out+"c",out+"c","16/v.model_scale"),A(out+"cz",`-${out}cz`),
     multiply("t.physicalq","t.entity_inverse",`v.render${i}q`),reflected(out+"q","t.physicalq"),

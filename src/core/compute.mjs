@@ -1,5 +1,5 @@
 import {A,If,axes,emit} from './expression.mjs';
-import {mergeGroups} from './merge.mjs';
+import {mergeGroups,parameterMerger} from './merge.mjs';
 import {minifier} from './minify.mjs';
 import {splitStatements} from './chunks.mjs';
 
@@ -23,7 +23,8 @@ export function sharingKey(rig){
   ]);
 }
 
-export function compilePrograms(entries,{reservedNames=[]}={}){
+// Specialized schedules remain useful when a shared kernel would be larger.
+export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
   const step=mergeGroups(entries.map(e=>e.frameChunks[1][0].yes),profile);
   const resets=[A(slot,0)];
   const all=[entries.map(e=>[e.initialize,e.frameChunks[0],e.frameChunks.at(-1),
@@ -86,4 +87,55 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
       computeOrder:execution.map(c=>c.id),computeAnimations,computeName:entries[0].name};
   });
   return programs;
+}
+
+// All actors use the same ordered animations, but keep their own parameters and
+// simulation state. Only the per-bone render expressions stay entity specific.
+export function compilePrograms(entries,{reservedNames=[]}={}){
+  const merger=parameterMerger(profile),ready='v.compute_ready';
+  const maps=entries.map(e=>new Map(flatten(e.initialize).map(n=>{
+    if(n.kind!=='set')throw new Error('Expected assignment-only physics initialization');
+    return [n.name,n.value];
+  })));
+  const initialNames=new Set(maps.flatMap(m=>[...m.keys()]));
+  let initial=[...initialNames].map(name=>A(name,merger.value(maps.map(m=>m.get(name)??0))));
+  const begin=[merger.merge(entries.map(e=>e.frameChunks[0])),A(slot,0)];
+  const step=[If('v.active&&v.steps>'+slot,merger.merge(entries.map(e=>e.frameChunks[1][0].yes))),A(slot,slot+'+1')];
+  const output=merger.merge(entries.map(e=>e.frameChunks.at(-1)));
+  const perInitial=entries.map((_,i)=>[A(profile,i),A(ready,0),A('v.active',0),
+    ...merger.parameters.map(p=>A(p.name,p.values[i]))]);
+  const all=[initial,begin,step,output,entries.map(e=>e.rootOutputs),perInitial];
+  const frequencyText=emit(all),written=assigned(all);
+  const external=[...frequencyText.matchAll(/(?<![\w.])v\.\w+/g)].map(m=>m[0]).filter(n=>!written.has(n));
+  const namespace=minifier({frequencyText,reservedNames,externalNames:external});
+  const source=(nodes,target='molang')=>target==='molang'?namespace(emit(nodes)):emit(nodes,target);
+  const split=(nodes,name)=>splitStatements(nodes,source,{limit:63900,target:61500,prefix:'compute_'+name});
+  const computeAnimations={},prefix=`animation.ragdoll.${entries[0].name}.compute`;
+  const carrier=(nodes,name)=>{
+    const definitions=new Map();
+    return split(nodes,name).map(nodes=>{
+      const text=source(nodes)+'return 0;';let id=definitions.get(text);
+      if(!id){id=`${prefix}.${name}.${definitions.size}`;definitions.set(text,id);
+        computeAnimations[id]={loop:true,animation_length:1,anim_time_update:text};}
+      return {id,nodes,source:text};
+    });
+  };
+  const declared=new Set([...initialNames,...merger.parameters.map(p=>p.name),profile,ready]);
+  initial=[...written].filter(n=>n.startsWith('v.')&&!declared.has(n)).map(n=>A(n,0)).concat(initial);
+  const initialize=carrier([If('!'+ready,[initial,A(ready,1)])],'initialize');
+  const start=carrier(begin,'begin'),steps=carrier(step,'step'),finish=carrier(output,'output');
+  const execution=[...initialize,...start,...steps,...steps,...steps,...finish];
+  return entries.map((entry,index)=>{
+    const {rig,rootOutputs}=entry,initializeChunks=split(perInitial[index],'parameters'+index);
+    const animation=(target='molang')=>({loop:true,override_previous_animation:true,bones:Object.fromEntries(rig.bodies.map((body,i)=>[body.bone,{
+      ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
+        const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
+        return body.parent<0?source(rootOutputs[i],target)+'return '+value+';':value;
+      })])),scale:axes.map(()=>target==='molang'?namespace(`1-v.pose${i}hidden`):`1-v.pose${i}hidden`),
+    }]))});
+    return {initialize:initializeChunks.flat(),frameChunks:execution.map(c=>c.nodes),rootOutputs,source,animation,names:namespace.roots,
+      initializeSources:initializeChunks.map(nodes=>source(nodes)),preAnimationSources:[],
+      frameSources:execution.map(c=>c.source),computeOrder:execution.map(c=>c.id),
+      computeAnimations,computeName:entries[0].name};
+  });
 }

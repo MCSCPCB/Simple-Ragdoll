@@ -1,7 +1,7 @@
 import { OUTPUT_LEVELS } from './core/model.mjs';
 import { outputModel } from './core/output.mjs';
 import { createProgram } from './core/program.mjs';
-import { compilePrograms, sharingKey } from './core/compute.mjs';
+import { compilePrograms, compileSpecializedPrograms, sharingKey } from './core/compute.mjs';
 import { INPUT_ANIMATION } from './core/input.mjs';
 import { parseJson } from './resources.js';
 import { clone } from './config.js';
@@ -30,6 +30,7 @@ export function adaptClient(original,rig,program,id){
     animations[alias]=id;return alias;
   });
   c.scripts={...s,initialize:[...(s.initialize??[]),...program.initializeSources],pre_animation:[...(s.pre_animation??[]),...program.preAnimationSources],animate:[...compute,...animate.map(condition),{[key]:'v.ragdoll_active'}],should_update_bones_and_effects_offscreen:true};
+  if(!c.scripts.pre_animation.length)delete c.scripts.pre_animation;
   return result;
 }
 
@@ -55,24 +56,43 @@ function* generateGroups(resources,entities){
     const animation=animationFile({[animationId]:program.animation()});
     return {index:entry.index,rig,program,name,animationId,definition,animation,bytes:byteLength(definition)+byteLength(animation)};
   };
-  const compile=entries=>compilePrograms(entries,{reservedNames}).map((program,i)=>finish(entries[i],program));
+  const compile=(entries,compiler=compilePrograms)=>compiler(entries,{reservedNames}).map((program,i)=>finish(entries[i],program));
   const size=records=>records.reduce((n,r)=>n+r.bytes,0)+byteLength(animationFile(records[0].program.computeAnimations));
+  const total=groups=>groups.reduce((n,records)=>n+size(records),0);
   const groups=new Map();
-  for(const entry of entries){const key=sharingKey(entry.rig);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
+  for(const entry of entries){const key=entry.rig.bodies.length;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
   let completed=0;
   const inputBytes=byteLength(inputFile);
   for(const group of groups.values()){
-    const compiled=[];
-    let results=[];
+    const compiled=[],independent=new Map(),specialized=new Map();
     for(const [i,entry] of group.entries()){
       yield {progress:[entry.original['minecraft:client_entity'].description.identifier,completed+i,entities.length,'generating']};
       const ready={...entry,...createProgram(entry.rig,{preview:true,reservedNames})};
-      compiled.push(ready);results.push(compile([ready]));
+      compiled.push(ready);independent.set(ready,compile([ready],compileSpecializedPrograms));
+      const key=sharingKey(ready.rig);if(!specialized.has(key))specialized.set(key,[]);specialized.get(key).push(ready);
     }
-    if(group.length>1){
-      yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,completed,entities.length,'sharing']};
-      const shared=compile(compiled);if(size(shared)<results.reduce((n,r)=>n+size(r),0))results=[shared];
-    }
+    yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,completed,entities.length,'sharing']};
+    // Keep the previous specialized strategy as a size baseline. Sharing is an
+    // automatic export optimization, not a change to the user's physics model.
+    let results=[...specialized.values()].flatMap(entries=>{
+      const separate=entries.map(e=>independent.get(e));
+      if(entries.length===1)return separate;
+      try{const shared=compile(entries,compileSpecializedPrograms);return size(shared)<total(separate)?[shared]:separate;}
+      catch(error){if(error.key!=='chunk')throw error;return separate;}
+    });
+    const share=entries=>{
+      try{return [compile(entries)];}
+      catch(error){
+        if(error.key!=='chunk')throw error;
+        if(entries.length===1)return [independent.get(entries[0])];
+        // An oversized variable loop cannot be split inside Molang. Smaller
+        // profile groups regain constant loops and stay below the expression cap.
+        const middle=Math.ceil(entries.length/2);
+        return [...share(entries.slice(0,middle)),...share(entries.slice(middle))];
+      }
+    };
+    const shared=share(compiled);
+    if(total(shared)<total(results))results=shared;
     for(const records of results){
       const bytes=byteLength(animationFile(records[0].program.computeAnimations));
       records.forEach((record,i)=>{record.bytes+=Math.floor(bytes/records.length)+(i<bytes%records.length?1:0)
