@@ -69,6 +69,15 @@ function terrain(box, origin = { x: 0, y: 0, z: 0 }) {
     : { min, max, friction: box.friction == null ? -1 : finite(box.friction, "friction", 0, 10), restitution: box.restitution == null ? -1 : finite(box.restitution, "restitution", 0, 1) };
 }
 
+function terrainBounds(bounds, boxes, origin) {
+  if (bounds === undefined) return null;
+  known(bounds, ["min", "max"]);
+  const { min, max } = terrain(bounds, origin);
+  if (axes.some(k => !Number.isInteger(min[k]) || !Number.isInteger(max[k]))) throw new RangeError("Integer terrain bounds required");
+  if (boxes === null || boxes.some(box => axes.some(k => box.min[k] < min[k] || box.max[k] > max[k]))) throw new RangeError("Terrain outside bounds");
+  return { min, max };
+}
+
 export class Ragdoll {
   constructor(entity) {
     if (!entity?.isValid || typeof entity.playAnimation !== "function") throw new Error("Invalid entity");
@@ -82,6 +91,7 @@ export class Ragdoll {
     this._state = "auto";
     this._simulation = { gravity: -1, gravity_vector: 0, gx: 0, gy: 0, gz: 0, time_scale: 1, iterations: 0, collisions: 1, friction: 1, joints: 1 };
     this._terrain = null;
+    this._terrainBounds = null;
     this._liquids = [];
     this._properties = new Map();
     this._joints = new Map();
@@ -188,21 +198,23 @@ export class Ragdoll {
     this._change(() => { this._simulation = next; if (options.joints !== undefined) this._joints.clear(); });
   }
 
-  setTerrain(boxes) {
+  setTerrain(boxes, bounds) {
     if (boxes !== null && (!Array.isArray(boxes) || boxes.length > MAX_TERRAIN_BOXES)) throw new RangeError("terrain");
     const next = boxes?.map(box => { known(box, ["min", "max", "friction", "restitution"]); return terrain(box); }) ?? null;
-    this._change(() => { this._terrain = next; });
+    const coverage = terrainBounds(bounds, next);
+    this._change(() => { this._terrain = next; this._terrainBounds = coverage; });
   }
 
   setEnvironment(environment) {
-    if (environment === null) return this._change(() => { this._terrain = null; this._liquids = []; });
-    known(environment, ["origin", "regions"]);
+    if (environment === null) return this._change(() => { this._terrain = null; this._terrainBounds = null; this._liquids = []; });
+    known(environment, ["origin", "regions", "bounds"]);
     const origin = environment.origin === undefined ? { x: 0, y: 0, z: 0 } : vec(environment.origin, "origin");
     if (!Array.isArray(environment.regions)) throw new TypeError("regions");
     const solids = [], liquids = [];
     for (const region of environment.regions) (region.type === "liquid" ? liquids : solids).push(terrain(region, origin));
     if (solids.length > MAX_TERRAIN_BOXES || liquids.length > MAX_LIQUIDS) throw new RangeError("Too many regions");
-    this._change(() => { this._terrain = solids; this._liquids = liquids; });
+    const coverage = terrainBounds(environment.bounds, solids, origin);
+    this._change(() => { this._terrain = solids; this._terrainBounds = coverage; this._liquids = liquids; });
   }
 
   dispose() {
@@ -212,6 +224,7 @@ export class Ragdoll {
       this._state = "auto";
       this._simulation = { gravity: -1, gravity_vector: 0, gx: 0, gy: 0, gz: 0, time_scale: 1, iterations: 0, collisions: 1, friction: 1, joints: 1 };
       this._terrain = null;
+      this._terrainBounds = null;
       this._liquids = []; this._properties.clear(); this._joints.clear();
       this._forces.clear();
       this._motions = [];
@@ -231,10 +244,10 @@ export class Ragdoll {
 
   _change(update) {
     if (!this.isValid) throw new Error("Invalid ragdoll");
-    const before = { state: this._state, simulation: this._simulation, terrain: this._terrain, liquids: this._liquids, properties: new Map(this._properties), joints: new Map(this._joints), forces: new Map(this._forces), motions: this._motions.slice(), sequence: this._sequence };
+    const before = { state: this._state, simulation: this._simulation, terrain: this._terrain, terrainBounds: this._terrainBounds, liquids: this._liquids, properties: new Map(this._properties), joints: new Map(this._joints), forces: new Map(this._forces), motions: this._motions.slice(), sequence: this._sequence };
     try { update(); if (!this._batch) this._send(); }
     catch (error) {
-      Object.assign(this, { _state: before.state, _simulation: before.simulation, _terrain: before.terrain, _liquids: before.liquids, _properties: before.properties, _joints: before.joints, _forces: before.forces, _motions: before.motions, _sequence: before.sequence });
+      Object.assign(this, { _state: before.state, _simulation: before.simulation, _terrain: before.terrain, _terrainBounds: before.terrainBounds, _liquids: before.liquids, _properties: before.properties, _joints: before.joints, _forces: before.forces, _motions: before.motions, _sequence: before.sequence });
       throw error;
     }
   }
@@ -245,7 +258,8 @@ export class Ragdoll {
     const put = (key, value) => writes.push(`v.ragdoll_${key}=${number(value)};`);
     put("control_mode", modes[this._state]);
     for (const [key, value] of Object.entries(this._simulation)) put("simulation_" + key, value);
-    put("terrain_mode", Number(this._terrain !== null));
+    put("terrain_mode", this._terrain === null ? 0 : this._terrainBounds ? 2 : 1);
+    if (this._terrainBounds) for (const side of ["min", "max"]) for (const k of axes) put(`terrain_bounds_${side}${k}`, this._terrainBounds[side][k]);
     put("terrain_count", this._terrain?.length ?? 0);
     this._terrain?.forEach((box, i) => {
       for (const side of ["min", "max"]) for (const k of axes) put(`terrain_${i}_${side}${k}`, box[side][k]);

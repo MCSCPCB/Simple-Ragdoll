@@ -158,7 +158,7 @@ function captureTerrain(dimension, { min, max }) {
 
   const solids = merge(1), water = merge(2), lava = merge(4);
   if (solids.length > MAX_TERRAIN_BOXES || water.length + lava.length > MAX_LIQUIDS) return null;
-  return { regions: [
+  return { bounds: { min, max }, regions: [
     ...solids.map(box => ({ ...box, type: "solid" })),
     ...water.map(box => ({ ...box, ...WATER })),
     ...lava.map(box => ({ ...box, ...LAVA })),

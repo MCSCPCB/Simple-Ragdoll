@@ -16,6 +16,7 @@ export function createInputs(rig) {
     set('v.ragdoll_', {protocol:1,session_high:0,session_low:0,revision:0,control_mode:0,simulation_gravity:-1,simulation_gravity_vector:0,
       simulation_gx:0,simulation_gy:0,simulation_gz:0,simulation_time_scale:1,simulation_iterations:0,simulation_collisions:1,simulation_friction:1,
       simulation_joints:1,terrain_mode:0,terrain_count:0,liquid_count:0,property_count:0,joint_count:0,force_count:0,motion_first:1,motion_last:0,motion_ack:0,motion_dropped:0}),
+    set('v.ragdoll_terrain_bounds_',Object.fromEntries(['min','max'].flatMap(side=>axes.map(k=>[side+k,0])))),
     A('v.input_revision',0),A('v.input_session_high',0),A('v.input_session_low',0),A('v.material_variant',-1),A('v.material_revision',-1),
     slots(MAX_TERRAIN_BOXES).map(i=>set(`v.ragdoll_terrain_${i}_`,Object.fromEntries(terrainFields.map(k=>[k,['friction','restitution'].includes(k)?-1:0])))),
     slots(MAX_LIQUIDS).map(i=>set(`v.ragdoll_liquid_${i}_`,Object.fromEntries(liquidFields.map(k=>[k,0])))),

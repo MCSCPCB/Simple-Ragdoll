@@ -6,6 +6,7 @@ export function createDynamics(rig, settings) {
 const { bodies: BODIES, joints: JOINTS, shapes: SHAPES, shapePairs: SHAPE_PAIRS } = rig;
 const CONTACT_LIMIT = settings.contactLimit;
 const GROUND = BODIES.length;
+const NATIVE_GROUND = GROUND + MAX_TERRAIN_BOXES;
 const dt = 1 / settings.frequency;
 const gravityValue = (factor = 1) => factor === 1 ? 'v.gravity_pixels' : 'v.gravity_step';
 const ITERATIONS = settings.iterations;
@@ -137,12 +138,18 @@ function collide() {
   ];
 }
 function terrainShape() {
-  return [If('v.ragdoll_terrain_mode', [
+  return [If('t.terrain_external', [
     A('t.box_index', `t.cell_id-${GROUND}`),
     dispatch('t.box_index', Array.from({length:MAX_TERRAIN_BOXES},(_,i)=>i), i => axes.flatMap(k => [A('t.box_min'+k,`v.external_terrain_${i}_min${k}`),A('t.box_max'+k,`v.external_terrain_${i}_max${k}`)])),
     ...axes.flatMap(k => [
       A('t.b' + k, `(t.box_min${k}+(t.box_max${k}-t.box_min${k})*0.5-v.o${k})*16`), A('t.bh' + k, `(t.box_max${k}-t.box_min${k})*8`)]),
   ], [axes.map(k => A('t.b' + k, `(t.cell${k}+0.5-v.o${k})*16`)), vector('t.bh', [8,8,8])])];
+}
+const outsideTerrain = prefix => axes.map(k=>`${prefix}${k}<v.ragdoll_terrain_bounds_min${k}||${prefix}${k}>=v.ragdoll_terrain_bounds_max${k}`).join('||');
+function terrainCell(solid) {
+  return [A('t.solid','t.terrain_external'),If('!t.terrain_external',[
+    If('v.ragdoll_terrain_mode!=2||'+outsideTerrain('t.cell'),A('t.solid',solid)),
+  ])];
 }
 function contacts() {
   const at='t.cellx-math.floor(v.ex),t.celly-math.floor(v.ey),t.cellz-math.floor(v.ez)';
@@ -153,11 +160,13 @@ function contacts() {
     SHAPES.map((_,i)=>axes.flatMap(k=>[A('t.min'+k,'math.min(t.min'+k+',v.s'+i+k+'-v.s'+i+'e'+k+')'),A('t.max'+k,'math.max(t.max'+k+',v.s'+i+k+'+v.s'+i+'e'+k+')')])),
     axes.flatMap(k=>[A('t.min'+k,'math.floor(v.o'+k+'+t.min'+k+'/16)'),A('t.max'+k,'math.floor(v.o'+k+'+t.max'+k+'/16)')]),
     A('v.terrain_minx','t.minx'),A('v.terrain_yz','(t.maxy-t.miny+1)*(t.maxz-t.minz+1)'),
-    A('t.contact_mode',SHAPE_PAIRS.length?0:1),Loop(SHAPE_PAIRS.length?2:1,[
-      A('t.pair',0),A('t.cell_id',GROUND),A('t.cellx','t.minx'),Loop(`t.contact_mode?(v.ragdoll_terrain_mode?math.clamp(v.ragdoll_terrain_count,0,${MAX_TERRAIN_BOXES}):t.maxx-t.minx+1):1`,[
-        A('t.celly','t.miny'),Loop('t.contact_mode&&!v.ragdoll_terrain_mode?t.maxy-t.miny+1:1',[
-          A('t.cellz','t.minz'),Loop('t.contact_mode?(v.ragdoll_terrain_mode?1:t.maxz-t.minz+1):'+SHAPE_PAIRS.length,[
-            If('!t.contact_mode?v.simulation_collisions:(v.ragdoll_terrain_mode?1:('+solid+'))',[
+    A('t.contact_mode',SHAPE_PAIRS.length?0:1),Loop(`(v.ragdoll_terrain_mode==2?1:0)+${SHAPE_PAIRS.length?2:1}`,[
+      A('t.terrain_external','t.contact_mode==1&&v.ragdoll_terrain_mode>0'),
+      A('t.pair',0),A('t.cell_id',`t.terrain_external?${GROUND}:${NATIVE_GROUND}`),A('t.cellx','t.minx'),Loop(`t.contact_mode?(t.terrain_external?math.clamp(v.ragdoll_terrain_count,0,${MAX_TERRAIN_BOXES}):t.maxx-t.minx+1):1`,[
+        A('t.celly','t.miny'),Loop('t.contact_mode&&!t.terrain_external?t.maxy-t.miny+1:1',[
+          A('t.cellz','t.minz'),Loop('t.contact_mode?(t.terrain_external?1:t.maxz-t.minz+1):'+SHAPE_PAIRS.length,[
+            If('t.contact_mode',terrainCell(solid),A('t.solid','v.simulation_collisions')),
+            If('t.solid',[
               A('t.shape',0),Loop('t.contact_mode?'+SHAPES.length+':1',[
                 A('t.do_contact',1),
                 If('!t.contact_mode',SHAPE_PAIRS.length?[
@@ -216,8 +225,9 @@ function separateTerrainContacts() {
     SHAPES.map((_,i)=>[axes.flatMap(k=>[A("t.min"+k,`math.min(t.min${k},v.s${i}${k}-v.s${i}e${k})`),A("t.max"+k,`math.max(t.max${k},v.s${i}${k}+v.s${i}e${k})`)])]),
     axes.flatMap(k=>[A("t.min"+k,`math.floor(v.o${k}+t.min${k}/16)`),A("t.max"+k,`math.floor(v.o${k}+t.max${k}/16)`)]),
     A("v.terrain_minx","t.minx"),A("v.terrain_yz","(t.maxy-t.miny+1)*(t.maxz-t.minz+1)"),
-    A("t.cell_id",GROUND),A("t.cellx","t.minx"),Loop(`v.ragdoll_terrain_mode?math.clamp(v.ragdoll_terrain_count,0,${MAX_TERRAIN_BOXES}):t.maxx-t.minx+1`,[A("t.celly","t.miny"),Loop("v.ragdoll_terrain_mode?1:t.maxy-t.miny+1",[A("t.cellz","t.minz"),Loop("v.ragdoll_terrain_mode?1:t.maxz-t.minz+1",[
-      If('v.ragdoll_terrain_mode?1:('+solid+')',[A("t.shape",0),Loop(SHAPES.length,[
+    A('t.terrain_external','v.ragdoll_terrain_mode>0'),Loop('v.ragdoll_terrain_mode==2?2:1',[
+    A("t.cell_id",`t.terrain_external?${GROUND}:${NATIVE_GROUND}`),A("t.cellx","t.minx"),Loop(`t.terrain_external?math.clamp(v.ragdoll_terrain_count,0,${MAX_TERRAIN_BOXES}):t.maxx-t.minx+1`,[A("t.celly","t.miny"),Loop("t.terrain_external?1:t.maxy-t.miny+1",[A("t.cellz","t.minz"),Loop("t.terrain_external?1:t.maxz-t.minz+1",[
+      terrainCell(solid),If('t.solid',[A("t.shape",0),Loop(SHAPES.length,[
         loadShape("t.a","t.shape"),terrainShape(),
         basis("t.au","t.aq"),
         If(axes.map(k=>`math.abs(t.a${k}-t.b${k})<=t.bh${k}+(${axes.map((l,j)=>`math.abs(t.au${j}${k})*t.ah${l}`).join('+')})`).join("&&"),[
@@ -231,6 +241,7 @@ function separateTerrainContacts() {
         ]),A("t.shape","t.shape+1"),
       ])]),A("t.cell_id","t.cell_id+1"),A("t.cellz","t.cellz+1"),
     ]),A("t.celly","t.celly+1")]),A("t.cellx","t.cellx+1")]),
+    A('t.terrain_external',0)]),
   ];
 }
 
@@ -241,7 +252,7 @@ function terrainContacts(){return separateContacts?separateTerrainContacts():[];
 function sortContacts() {
   const keys=["lox","lo","hix","hi"];
   const loadKey=(out,index)=>[...["lo","hi"].map(k=>A(out+k,choose(index,slots.map(i=>`v.c${i}${k}`)))),
-    ...["lo","hi"].map(k=>A(out+k+"x",`${out+k}<${GROUND}?(${choose(out+k,BODIES.map((_,i)=>`v.d${i}minx`))}):(v.ragdoll_terrain_mode?((${terrainValue(`${out+k}-${GROUND}`, 'minx')})-v.ox)*16:((v.terrain_minx+math.floor((${out+k}-${GROUND})/v.terrain_yz)+0.5-v.ox)*16-8))`))];
+    ...["lo","hi"].map(k=>A(out+k+"x",`${out+k}<${GROUND}?(${choose(out+k,BODIES.map((_,i)=>`v.d${i}minx`))}):(${out+k}<${NATIVE_GROUND}?((${terrainValue(`${out+k}-${GROUND}`, 'minx')})-v.ox)*16:((v.terrain_minx+math.floor((${out+k}-${NATIVE_GROUND})/v.terrain_yz)+0.5-v.ox)*16-8))`))];
   const less=keys.reduceRight((rest,k)=>`(t.key_${k}<t.other_${k}||(t.key_${k}==t.other_${k}&&${rest}))`,"0");
   return [A("t.i",0),Loop("v.contact_count",[
     loadKey("t.key_","t.i"),A("t.insert","t.i"),A("t.moving",1),
@@ -285,7 +296,7 @@ function contactSolve() {
       dispatch('t.slot',page,i=>[...contactKeys,'l0','l1','l2'].map(k=>A((k==='g'||k.startsWith('ra')||k.startsWith('rb')?'t.':prefix)+k,solvedContact(i,k))),page[0]),
       A('t.cia','math.min(t.chi,'+GROUND+')'),A('t.cib','math.min(t.clo,'+GROUND+')'),
       A('t.ground_friction',settings.terrain.friction),A('t.ground_restitution',settings.terrain.restitution),
-      If(`v.ragdoll_terrain_mode&&math.max(t.clo,t.chi)>=${GROUND}`,[
+      If(`math.max(t.clo,t.chi)>=${GROUND}&&math.max(t.clo,t.chi)<${NATIVE_GROUND}`,[
         A('t.material_index',`math.max(t.clo,t.chi)-${GROUND}`),
         ...['friction','restitution'].map(key=>A('t.ground_'+key,terrainValue('t.material_index',key))),
       ]),

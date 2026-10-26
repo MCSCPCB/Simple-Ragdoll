@@ -209,15 +209,16 @@ ragdoll.setJointsEnabled(false, "neck");
 ragdoll.setSimulationOptions({ gravity: { x: 0, y: 4, z: 0 }, timeScale: 0.5 });
 ```
 
-#### `setTerrain(boxes)`
+#### `setTerrain(boxes, bounds)`
 
 替换固体地形，不影响液体区域
 
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
 | `boxes` | [`TerrainBox`](#terrainbox)`[] \| null` | 完整的固体碰撞盒列表，最多 64 个。`[]` 表示无地形，`null` 恢复资源包内置的方块查询 |
+| `bounds` | `{ min: Vector3, max: Vector3 }` | 可选。脚本地形的覆盖范围，范围外仍使用内置方块查询。坐标须为整数且包含所有 `boxes`，省略时覆盖全部位置 |
 
-- 提交地形后不再查询世界方块，方块变化时需要重新提交
+- 覆盖范围内不再查询世界方块，方块变化时需要重新提交
 
 ```js
 ragdoll.setTerrain([{ min: { x: -8, y: 63, z: -8 }, max: { x: 8, y: 64, z: 8 } }]);
@@ -346,6 +347,7 @@ type RagdollState = "auto" | "active" | "inactive" | "paused";
 ```ts
 type Environment = {
   origin?: Vector3;
+  bounds?: { min: Vector3; max: Vector3 };
   regions: (SolidRegion | LiquidRegion)[];
 };
 ```
@@ -353,6 +355,7 @@ type Environment = {
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
 | `origin` | `Vector3` | 区域坐标原点。默认值：`{ x: 0, y: 0, z: 0 }` |
+| `bounds` | `{ min: Vector3, max: Vector3 }` | 可选。固体地形的覆盖范围，相对于 `origin`，规则同 [`setTerrain()`](#setterrainboxes-bounds) 的 `bounds` |
 | `regions` | `(SolidRegion \| LiquidRegion)[]` | 必填。完整区域列表，最多 64 个固体、16 个液体。`[]` 清除全部固体与液体 |
 
 #### `SolidRegion`
@@ -482,7 +485,7 @@ type Quaternion = { x: number; y: number; z: number; w: number };
 
 | 行为 | 实现 |
 | --- | --- |
-| 村民受伤倒地 | 生命值低于上限时进入布娃娃，沿受击方向施加初始冲量 |
+| 村民濒死倒地 | 生命值将降至 1 及以下时保持为 1 并进入布娃娃，沿受击方向施加初始冲量 |
 | 地形与液体 | 采样周围水平 6 格、上下各 4 格的方块，合并为固体、水、岩浆区域后调用 `setEnvironment()` |
 | 地形更新 | 范围内有玩家挖掘、放置或爆炸时重新采样 |
-| 恢复 | 生命值回满时调用 `setState("inactive")` 并清除环境 |
+| 死亡 | 濒死 15 秒后死亡，期间不再受伤 |
