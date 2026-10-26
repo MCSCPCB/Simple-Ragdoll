@@ -184,19 +184,29 @@ export function refitShapes(config,infos,id){
 // One box around the cubes of a bone and of descendant bones without their own body.
 export function fitShape(geometry,frames,owners,bone,fallback){
   const byName=new Map(geometry.bones.map(b=>[b.name,b])),dest=frames.get(bone),points=[];
+  let dominant=[0,0,0,1],largestVolume=0;
   for(const source of geometry.bones){
     let owner=source.name;while(owner&&!owners.has(owner))owner=byName.get(owner)?.parent;
     if((owner??fallback)!==bone)continue;
     const frame=frames.get(source.name);
     for(const cube of source.cubes??[]){
-      if(!cube.size.every(n=>n>0))continue;
+      if(!cube.size.every(n=>n+2*(cube.inflate??0)>0))continue;
       const center=add(cube.origin,scale(cube.size,.5)),pivot=cube.pivot??center,q=modelRotation(cube.rotation??[0,0,0]);
+      const volume=cube.size.reduce((n,size)=>n*Math.max(0,size+2*(cube.inflate??0)),1);
+      if(volume>largestVolume){largestVolume=volume;dominant=multiply(conjugate(dest.q),multiply(frame.q,q));}
       for(let mask=0;mask<8;mask++){const corner=center.map((n,i)=>n+((mask>>i&1)?1:-1)*(cube.size[i]/2+(cube.inflate??0)));points.push(toLocal(dest,toWorld(frame,add(pivot,rotate(q,sub(corner,pivot))))));}
     }
   }
   if(!points.length)return {type:'box',center:[...(byName.get(bone)?.pivot??[0,0,0])],size:[2,2,2],rotation:[0,0,0]};
   const min=[0,1,2].map(i=>Math.min(...points.map(p=>p[i]))),max=[0,1,2].map(i=>Math.max(...points.map(p=>p[i])));
-  return {type:'box',center:min.map((n,i)=>(n+max[i])/2),size:min.map((n,i)=>Math.max(.1,max[i]-n)),rotation:[0,0,0]};
+  const box={type:'box',center:min.map((n,i)=>(n+max[i])/2),size:min.map((n,i)=>Math.max(.1,max[i]-n)),rotation:[0,0,0]};
+  // A rotated cube should not become a much larger axis-aligned collider. Try its
+  // dominant cube's orientation while still enclosing every owned cube in one box.
+  const rotation=quaternionEuler(dominant),q=modelRotation(rotation),aligned=points.map(p=>rotate(conjugate(q),p));
+  const lo=[0,1,2].map(i=>Math.min(...aligned.map(p=>p[i]))),hi=[0,1,2].map(i=>Math.max(...aligned.map(p=>p[i])));
+  const size=lo.map((n,i)=>Math.max(.1,hi[i]-n));
+  if(size.reduce((a,b)=>a*b,1)<box.size.reduce((a,b)=>a*b,1)*.99)return {type:'box',center:rotate(q,lo.map((n,i)=>(n+hi[i])/2)),size,rotation};
+  return box;
 }
 const uniqueId=(base,taken)=>{let id=base.replace(/\W/g,'_');if(!/^[a-zA-Z_]/.test(id))id='body_'+id;while(taken[id])id+='_';return id;};
 const isAncestor=(bones,ancestor,name)=>{let b=bones.get(name)?.parent;while(b){if(b===ancestor)return true;b=bones.get(b)?.parent;}return false;};

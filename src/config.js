@@ -1,11 +1,12 @@
 import villager from './presets/villager.json' with { type: 'json' };
 import signatures from './presets/villager-models.json' with { type: 'json' };
 import { normalizeModel } from './core/model.mjs';
-import { descriptionOf } from './resources.js';
+import { descriptionOf, relatedAnimations } from './resources.js';
 import { fail } from './i18n.js';
-import { boneFrames, fitShape, defaultLimits, autoCollisionPairs, inspect, alignJoint, effective, shapePosition, SHARED_BODY, SHARED_JOINT } from './rig.js';
-import { add, sub, rotate, modelRotation, conjugate } from './core/math.mjs';
+import { boneFrames, fitShape, defaultLimits, autoCollisionPairs, inspect, alignJoint, effective, shapePosition, quaternionEuler, SHARED_BODY, SHARED_JOINT } from './rig.js';
+import { add, sub, rotate, multiply, modelRotation, conjugate } from './core/math.mjs';
 import { inferScale } from './scale.js';
+import { automaticBones } from './auto.js';
 
 export const clone=value=>JSON.parse(JSON.stringify(value));
 export const modelSignature=g=>JSON.stringify(g.bones.map(b=>({name:b.name,parent:b.parent,pivot:b.pivot??[0,0,0],rotation:b.rotation??[0,0,0],cubes:b.cubes??[]})));
@@ -34,13 +35,8 @@ export function autoConfig(client,resources,variants){
   const selected=models.map((v,i)=>({...v,scale:v.scale??inferScale(client,models,i)}));
   const first=resources.geometries.get(client.geometry[selected.at(-1).geometry]);if(!first)fail('geometry',[selected.at(-1).geometry]);
   const bodies={},joints={},used=new Set(),byBone=new Map();
-  const volume=bone=>(bone.cubes??[]).reduce((n,c)=>n+(c.size.every(n=>n>0)?c.size.reduce((a,b)=>a*b,1):0),0);
-  const candidates=first.bones.filter(b=>volume(b)>0&&selected.every(v=>resources.geometries.get(client.geometry[v.geometry])?.bones.some(other=>other.name===b.name)));
-  const largest=candidates.slice().sort((a,b)=>volume(b)-volume(a))[0];
+  const {chosen,largest,volume}=automaticBones(selected.map(v=>{const g=resources.geometries.get(client.geometry[v.geometry]);if(!g)fail('geometry',[v.geometry]);return g;}),relatedAnimations(resources,client));
   const byName=new Map(first.bones.map(b=>[b.name,b]));
-  for(const bone of first.bones){const seen=new Set();let b=bone;while(b){if(seen.has(b.name))fail('bone_cycle',[b.name]);seen.add(b.name);if(b.parent&&!byName.has(b.parent))fail('bone_missing',[b.parent]);b=byName.get(b.parent);}}
-  const decorative=/(?:nose|hat|brim|eyebrow|eyelash|teeth|tooth|finger|thumb|decoration|accessory)/i;
-  const chosen=candidates.filter(b=>b===largest||!decorative.test(b.name)&&!(byName.has(b.parent)&&volume(b)<volume(byName.get(b.parent))*.04)).sort((a,b)=>volume(b)-volume(a)).slice(0,32);
   for(const bone of first.bones){
     if(!chosen.includes(bone))continue;
     let id=bone.name.replace(/\W/g,'_');if(!/^[a-zA-Z_]/.test(id))id='body_'+id;
@@ -79,15 +75,15 @@ export function variantConfig(config,index){
 // Multiple boxes retain their relative layout within the new bone bounds.
 function fitBoxes(boxes,source,target){
   if(boxes.length===1)return [target];
-  const ratio=target.size.map((n,i)=>n/source.size[i]);
+  const ratio=target.size.map((n,i)=>n/source.size[i]),from=conjugate(modelRotation(source.rotation)),to=modelRotation(target.rotation);
   return boxes.map(box=>{
-    const center=shapePosition(box),q=modelRotation(box.rotation??[0,0,0]),inverse=conjugate(q),half=[0,0,0];
+    const center=rotate(from,sub(shapePosition(box),source.center)),q=multiply(from,modelRotation(box.rotation??[0,0,0])),inverse=conjugate(q),half=[0,0,0];
     for(let mask=0;mask<8;mask++){
       const corner=rotate(q,box.size.map((n,i)=>n/2*((mask>>i&1)?1:-1)));
       const local=rotate(inverse,corner.map((n,i)=>n*ratio[i]));
       local.forEach((n,i)=>half[i]=Math.max(half[i],Math.abs(n)));
     }
-    return {type:'box',center:add(target.center,sub(center,source.center).map((n,i)=>n*ratio[i])),size:half.map(n=>n*2),rotation:box.rotation??[0,0,0]};
+    return {type:'box',center:add(target.center,rotate(to,center.map((n,i)=>n*ratio[i]))),size:half.map(n=>n*2),rotation:quaternionEuler(multiply(to,q))};
   });
 }
 

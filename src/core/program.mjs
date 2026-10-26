@@ -133,7 +133,11 @@ export function boneOutput(rig,index) {
   const body=rig.bodies[index],parent=body.parent;
   const transform=(i,out)=>[
     axisRotation("t.entity_inverse","y","q.body_y_rotation"),
-    axes.map(k=>A("t.center"+k,`v.o${k}-v.anchor_r${k}+v.render${i}${k}`)),
+    // model_scale is the actor's model-unit scale (normally 1/16), including
+    // behavior-pack scaling. World-space anchor compensation must undo it too.
+    // Preview has no actor scale query and uses the normal model-unit scale.
+    A('t.actor_scale','math.max(0.000001,(q.model_scale??0.0625)*16)'),
+    axes.map(k=>A("t.center"+k,`(v.o${k}-v.anchor_r${k})/t.actor_scale+v.render${i}${k}`)),
     rotate(out+"c","t.entity_inverse","t.center"),scale(out+"c",out+"c","16/v.model_scale"),A(out+"cz",`-${out}cz`),
     multiply("t.physicalq","t.entity_inverse",`v.render${i}q`),reflected(out+"q","t.physicalq"),
     // 死亡侧翻是模型外层变换，由物理根骨骼同时补偿位置和朝向，子骨骼继承。
