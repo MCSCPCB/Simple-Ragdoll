@@ -16,8 +16,14 @@ async function copyFiles(zip, directory, prefix = '') {
 const resources = await importPack(await readFile('examples/villager.mcpack'), JSZip);
 const config = parseJson(await readFile('src/presets/villager.json', 'utf8'), 'src/presets/villager.json');
 delete config.$schema;
+config.trigger = 'q.max_health>0&&q.health<=1';
+config.release = '0';
 await writeFile('examples/villager.physics.json', JSON.stringify(config, null, 2) + '\n');
 const rows = entityRows(resources);
+for (const row of rows.filter(row => row.selected)) {
+  row.config.trigger = config.trigger;
+  row.config.release = config.release;
+}
 if (!rows.find(row => row.id === 'minecraft:villager_v2')?.selected) throw new Error('Villager preset did not match.');
 const bpManifest = parseJson(await readFile('simple_ragdoll/BP/manifest.json', 'utf8'), 'simple_ragdoll/BP/manifest.json');
 const rpManifest = parseJson(await readFile('simple_ragdoll/RP/manifest.json', 'utf8'), 'simple_ragdoll/RP/manifest.json');

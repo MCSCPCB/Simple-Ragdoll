@@ -1,7 +1,7 @@
 {
   "formatVersion": 1,
-  "trigger": "q.max_health>0&&q.health<q.max_health",
-  "release": "q.health>=q.max_health",
+  "trigger": "q.max_health>0&&q.health<=1",
+  "release": "0",
   "defaults": {
     "friction": 0.3,
     "restitution": 0,
