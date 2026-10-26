@@ -37,6 +37,23 @@ export function anchorPrograms() {
   };
 }
 
+export function deathPrograms() {
+  return {
+    initialize:set("v.death_",{ready:0,previous:0,current:0}),
+    frame:[
+      A("t.death_tick","q.is_alive?0:math.max(0,q.death_ticks)"),
+      A("t.death_reset","!v.death_ready||t.death_tick<v.death_current||t.death_tick-v.death_current>1||q.delta_time>0.25"),
+      If("q.is_alive",set("v.death_",{previous:0,current:0,ready:1}),[
+        If("t.death_reset",[
+          A("v.death_previous","math.max(0,t.death_tick-1)"),A("v.death_current","t.death_tick"),A("v.death_ready",1),
+        ],[
+          If("t.death_tick!=v.death_current",A("v.death_previous","v.death_current")),A("v.death_current","t.death_tick"),
+        ]),
+      ]),
+    ],
+  };
+}
+
 export function poseCapture(rig,normalScale) {
   return [A("v.pose_valid",1),A("v.pose_scale",normalScale),A("v.pose_yaw","q.body_y_rotation"),
     rig.bodies.map((body,i)=>[
@@ -95,6 +112,11 @@ export function boneOutput(rig,index) {
     axes.map(k=>A("t.center"+k,`v.o${k}-v.anchor_r${k}+v.render${i}${k}`)),
     rotate(out+"c","t.entity_inverse","t.center"),scale(out+"c",out+"c","16/v.model_scale"),A(out+"cz",`-${out}cz`),
     multiply("t.physicalq","t.entity_inverse",`v.render${i}q`),reflected(out+"q","t.physicalq"),
+    // 死亡侧翻是模型外层变换，由物理根骨骼同时补偿位置和朝向，子骨骼继承。
+    ...(parent<0?[If("!q.is_alive",[
+      axisRotation("t.death_inverse","z","math.min(math.sqrt(math.max(0,math.lerp(v.death_previous,v.death_current,math.clamp(q.frame_alpha,0,1)))/20*1.6),1)*90"),
+      rotate(out+"c","t.death_inverse",out+"c"),multiply(out+"q","t.death_inverse",out+"q"),
+    ])]:[]),
     vector("t.bind_center",rig.bodies[i].modelCenter),rotate("t.bind_center",out+"q","t.bind_center"),sub(out+"t",out+"c","t.bind_center"),
   ];
   return [transform(index,"t.body_"),
@@ -109,14 +131,14 @@ export function boneOutput(rig,index) {
 }
 
 export function createProgram(rig, {preview=false,reservedNames=[]}={}) {
-  const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),d=createDynamics(rig,s),input=createInputs(rig),liquids=createLiquids(rig),results=createResults(rig,reservedNames),poseKeys=[...axes,...quat.map(k=>"q"+k)];
+  const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),death=deathPrograms(),d=createDynamics(rig,s),input=createInputs(rig),liquids=createLiquids(rig),results=createResults(rig,reservedNames),poseKeys=[...axes,...quat.map(k=>"q"+k)];
   let variant=String(rig.variants.length-1);
   for(let i=rig.variants.length-2;i>=0;i--)variant=`(${rig.variants[i].when})?${i}:(${variant})`;
   let initialize=[set("v.",{active:0,activated:0,variant:0,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0,has_position:0,pose_valid:0,frames:0,model_scale:1}),
-    vector("v.last_",[0,0,0]),anchor.initialize,input.initialize,liquids.initialize,results.initialize,
+    vector("v.last_",[0,0,0]),anchor.initialize,death.initialize,input.initialize,liquids.initialize,results.initialize,
     rig.bodies.map((_,i)=>[set(`v.b${i}`,Object.fromEntries([...poseKeys,...poseKeys.map(k=>"prev"+k),...poseKeys.map(k=>"old"+k),...axes.flatMap(k=>["v"+k,"w"+k])].map(k=>[k,k.endsWith("qw")?1:0]))),
       vector(`v.render${i}`,[0,0,0]),quaternion(`v.render${i}q`,[0,0,0,1])]),d.initializeDynamics()];
-  const begin=[axes.map((k,i)=>A("v.e"+k,`q.position(${i})`)),anchor.frame,A("v.steps",0),A("v.activated",0),
+  const begin=[death.frame,axes.map((k,i)=>A("v.e"+k,`q.position(${i})`)),anchor.frame,A("v.steps",0),A("v.activated",0),
     axes.map(k=>A("v.input_"+k,`v.has_position?(v.e${k}-v.last_${k})/math.max(q.delta_time,0.001):0`)),copy("v.last_","v.e"),A("v.has_position",1),
     input.frame,
     If(`v.active&&(v.ragdoll_control_mode==2||(v.ragdoll_control_mode==0&&(${rig.release})))`,[A("v.active",0),A("v.accum",0),A("v.pose_valid",0),A("v.frames",0)]),

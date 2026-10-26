@@ -1,4 +1,4 @@
-import { system, world } from "@minecraft/server";
+import { PassengerOfBlockEmoteType, system, world } from "@minecraft/server";
 import { Ragdoll, MAX_TERRAIN_BOXES, MAX_LIQUIDS } from "./ragdoll.js";
 
 const VILLAGERS = ["minecraft:villager", "minecraft:villager_v2"];
@@ -6,6 +6,9 @@ const TERRAIN_RADIUS = 6;
 const WATER = { type: "liquid", density: 1000, drag: 2, angularDrag: 2 };
 const LAVA = { type: "liquid", density: 3000, drag: 8, angularDrag: 8 };
 const controllers = new Map();
+const MOVEMENT_LOCK = "simple_ragdoll:movement_lock";
+const lockedVillagers = new Set();
+let movementRun;
 
 function isVillager(entity) {
   return entity.isValid && VILLAGERS.includes(entity.typeId);
@@ -34,6 +37,82 @@ function enterRagdoll(state, impulse) {
     if (impulse) r.applyImpulse(impulse);
   });
   state.active = true;
+  lockMovement(state);
+}
+
+function lockMovement(state) {
+  const { entity } = state;
+  releaseMovement(entity);
+  state.motion = { position: entity.location, velocityY: 0 };
+  entity.setDynamicProperty(MOVEMENT_LOCK, true);
+  lockedVillagers.add(state);
+  updateMovement(state);
+  if (movementRun === undefined) movementRun = system.runInterval(() => {
+    for (const state of lockedVillagers) {
+      if (!state.entity.isValid) {
+        releaseMovement(state.entity, state);
+        continue;
+      }
+      syncHealth(state.entity);
+      if (state.active) updateMovement(state);
+    }
+  }, 1);
+}
+
+function updateMovement({ entity, motion }) {
+  if (motion.support) {
+    let block;
+    try { block = entity.dimension.getBlock(motion.support.location); }
+    catch { return; }
+    if (!block) return;
+    if (entity.isPassengerOfBlock && block.permutation.matches(motion.support.typeId, motion.support.states)) return;
+    if (entity.isPassengerOfBlock) entity.stopPassengerOfBlock();
+    motion.support = undefined;
+  }
+
+  const position = entity.location, velocity = entity.getVelocity();
+  const nextVelocityY = (motion.velocityY - 0.08) * 0.98;
+  const target = {
+    x: motion.position.x,
+    y: Math.max(motion.position.y + motion.velocityY - 0.08, Math.min(motion.position.y, position.y)),
+    z: motion.position.z,
+  };
+  const velocityY = Math.max(nextVelocityY, Math.min(0, velocity.y));
+  if (position.x !== target.x || position.y !== target.y || position.z !== target.z) {
+    entity.teleport(target, { keepVelocity: true });
+  }
+  if (velocity.x !== 0 || velocity.z !== 0 || velocity.y !== velocityY) {
+    entity.clearVelocity();
+    if (velocityY !== 0) entity.applyImpulse({ x: 0, y: velocityY, z: 0 });
+  }
+  motion.position = target;
+  motion.velocityY = velocityY;
+
+  let support;
+  try { support = entity.getBlockStandingOn({ ignoreThinBlocks: false }); }
+  catch { return; }
+  if (!support) return;
+  const blockPosition = support.location;
+  const offset = { x: target.x - blockPosition.x, y: target.y - blockPosition.y, z: target.z - blockPosition.z };
+  entity.clearVelocity();
+  entity.startPassengerOfBlock(blockPosition, offset, entity.getRotation().y, 180, PassengerOfBlockEmoteType.Standing);
+  motion.velocityY = 0;
+  motion.support = { location: blockPosition, typeId: support.typeId, states: support.permutation.getAllStates() };
+}
+
+function releaseMovement(entity, state) {
+  if (state) {
+    lockedVillagers.delete(state);
+    state.motion = undefined;
+  }
+  if (entity.isValid && entity.getDynamicProperty(MOVEMENT_LOCK)) {
+    if (entity.isPassengerOfBlock) entity.stopPassengerOfBlock();
+    entity.setDynamicProperty(MOVEMENT_LOCK, undefined);
+  }
+  if (!lockedVillagers.size && movementRun !== undefined) {
+    system.clearRun(movementRun);
+    movementRun = undefined;
+  }
 }
 
 function hitDirection(entity, source) {
@@ -148,6 +227,7 @@ function restoreRagdoll(state) {
     r.setEnvironment(null);
   });
   state.active = false;
+  releaseMovement(state.entity, state);
 }
 
 function syncHealth(entity, initialImpulse) {
@@ -160,8 +240,9 @@ function syncHealth(entity, initialImpulse) {
   if (maxHealth > 0 && currentHealth < maxHealth) {
     if (!state?.active) enterRagdoll(state ?? getController(entity), initialImpulse);
   // q.health >= q.max_health
-  } else if (currentHealth >= maxHealth && state?.active) {
-    restoreRagdoll(state);
+  } else if (currentHealth >= maxHealth) {
+    if (state?.active) restoreRagdoll(state);
+    else releaseMovement(entity, state);
   }
 }
 
@@ -184,6 +265,7 @@ world.afterEvents.entityRemove.subscribe(({ removedEntityId }) => {
   const state = controllers.get(removedEntityId);
   if (!state) return;
   if (state.terrainUpdate !== undefined) system.clearRun(state.terrainUpdate);
+  releaseMovement(state.entity, state);
   state.ragdoll.dispose();
   controllers.delete(removedEntityId);
 });
