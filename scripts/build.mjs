@@ -8,6 +8,6 @@ const worker = await build({entryPoints:['src/output-worker.js'],bundle:true,for
 await build({
   entryPoints: ['src/index.js'], outfile: 'dist/simple_ragdoll.js',
   bundle: true, format: 'iife', target: ['chrome102'], charset: 'utf8',
-  legalComments: 'none', banner: {js: '// Simple Ragdoll 0.1.0'}, footer: {js: '/* Three.js TransformControls\n' + controlsLicense + '*/\n/* JSZip\n' + zipLicense + '*/\n/* Pako\n' + compressionLicense + '*/'},
+  legalComments: 'none', banner: {js: '// Simple Ragdoll 0.1.1'}, footer: {js: '/* Three.js TransformControls\n' + controlsLicense + '*/\n/* JSZip\n' + zipLicense + '*/\n/* Pako\n' + compressionLicense + '*/'},
   define:{RAGDOLL_OUTPUT_WORKER:JSON.stringify(worker.outputFiles[0].text)}
 });

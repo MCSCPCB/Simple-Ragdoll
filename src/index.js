@@ -10,7 +10,7 @@ const on = (event, listener, target = Blockbench) => {target.on(event, listener)
 registerTranslations();
 Plugin.register('simple_ragdoll', {
   title: t('title'), author: 'MCSCPCB', description: t('description'),
-  icon: 'accessibility_new', version: '0.1.0', min_version: '4.12.0', variant: 'both',
+  icon: 'accessibility_new', version: '0.1.1', min_version: '4.12.0', variant: 'both',
   tags: ['Minecraft: Bedrock Edition', 'Animation'],
   onload() {
     property = new Property(ModelProject, 'object', 'bedrock_ragdoll', {
