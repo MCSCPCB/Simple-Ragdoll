@@ -8265,12 +8265,6 @@
   };
   var ENTITY = `<template v-if="p.type==='entity'">
   <h3 class="rg-heading"><i class="material-icons">accessibility_new</i><span class="rg-ellipsis">{{ s.entity }}</span></h3>
-  <section><h4>{{ t('section_models') }}</h4>
-    <button @click="run('chooseModels')">{{ t('select_models') }}</button>
-    <label v-for="v in s.variants.slice(0,-1)" :key="'when'+v.index" class="rg-expression" :title="v.geometry"><span>{{ t('variant_when',[v.label]) }}</span>
-      <input class="dark_bordered focusable_input" :value="v.when" @change="set('when.'+v.index,$event.target.value)"></label>
-    <p v-if="s.variants.length>1" class="rg-note">{{ t('variant_default_note',[s.variants[s.variants.length-1].label]) }}</p>
-  </section>
   <section><h4>{{ t('section_entity') }}</h4>
     <rg-field :label="t('scale')" :tip="t('scale_tip')" :value="s.variants[s.variant].scale" :min=".001" :max="100" :step=".0625" @change="set('scale',$event)"></rg-field>
   </section>
