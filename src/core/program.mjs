@@ -56,7 +56,7 @@ export function deathPrograms() {
 export function poseCapture(rig,normalScale) {
   return [A("v.pose_valid",1),A("v.pose_scale",normalScale),A("v.pose_yaw","q.body_y_rotation"),
     rig.bodies.map((body,i)=>[
-      A("t.bone",`q.bone_orientation_trs('${body.bone}')`),
+      A("t.bone",`q.bone_orientation_trs('${body.bone.toLowerCase()}')`),
       axes.map(k=>A(`v.pose${i}t${k}`,`t.bone.t.${k}`)),
       axes.map(k=>A(`v.pose${i}s${k}`,`t.bone.s.${k}`)),
       modelQuaternion(`v.pose${i}q`,axes.map(k=>`t.bone.r.${k}`)),
