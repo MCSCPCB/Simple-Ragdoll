@@ -1,6 +1,7 @@
 import { A, If, Loop, axes, quat, vector, copy, add, sub, scale, cross, dot, rotate, multiply, normalize, choose, dispatch } from "./expression.mjs";
 import { terrainValue, MAX_TERRAIN_BOXES } from './input.mjs';
 import { materialValue, inverseMass, inverseInertia } from './control.mjs';
+import { hingeFrame, nearestAngle } from './hinge.mjs';
 
 export function createDynamics(rig, settings) {
 const { bodies: BODIES, joints: JOINTS, shapes: SHAPES, shapePairs: SHAPE_PAIRS } = rig;
@@ -10,6 +11,8 @@ const NATIVE_GROUND = GROUND + MAX_TERRAIN_BOXES;
 const dt = 1 / settings.frequency;
 const gravityValue = (factor = 1) => factor === 1 ? 'v.gravity_pixels' : 'v.gravity_step';
 const ITERATIONS = settings.iterations;
+const hasHinges=JOINTS.some(j=>j.hinge!==0);
+const jointRows=hasHinges?7:5;
 const slots = Array.from({ length: CONTACT_LIMIT }, (_, i) => i);
 const parts = [...BODIES, null];
 const contactKeys = ["g", "lo", "hi", ...["n", "ra", "rb"].flatMap(p => axes.map(k => p + k))];
@@ -34,7 +37,7 @@ function initializeDynamics() {
     parts.flatMap((_, i) => bodyKeys.map(k => A(`v.d${i}.${k}`, 0))),
     [...contactKeys,'l0','l1','l2'].map(k=>A('v.scratch_zero.'+k,0)),slots.map(i=>A('v.c'+i,'v.scratch_zero')),
     pagedContacts?slots.map(i=>[...contactKeys,'l0','l1','l2'].map(k=>A(solvedContact(i,k),0))):[],
-    JOINTS.flatMap((_, i) => Array.from({ length: 5 }, (_, k) => A(`v.j${i}l${k}`, 0))),
+    JOINTS.flatMap((_, i) => Array.from({ length: jointRows }, (_, k) => A(`v.j${i}l${k}`, 0))),
   ];
 }
 
@@ -70,7 +73,7 @@ function prepareBodies() {
       dispatch('t.shape_index',SHAPES,(_,i)=>A('v.s'+i,'v.scratch_s')),A('t.shape_index','t.shape_index+1'),
     ]),
     BODIES.map((_,i)=>A('v.d'+i+'.minx',SHAPES.flatMap((s,j)=>s.body===i?['(v.s'+j+'.x-v.s'+j+'.ex)']:[]).reduce((a,b)=>'math.min('+a+','+b+')'))),
-    JOINTS.flatMap((_,i)=>Array.from({length:5},(_,k)=>A('v.j'+i+'l'+k,0))),
+    JOINTS.flatMap((_,i)=>Array.from({length:jointRows},(_,k)=>A('v.j'+i+'l'+k,0))),
   ];
 }
 function appendContact() {
@@ -271,9 +274,9 @@ function sortContacts() {
   }):[]];
 }
 
-function equation(lambda, angular = false) {
+function equation(lambda, angular = false, hinge = false) {
   return [matrix("t.response_a", "t.da", "t.ga"), matrix("t.response_b", "t.db", "t.gb"),
-    A("t.denominator", `t.daim+t.dbim+(${dot("t.ga", "t.response_a")})+(${dot("t.gb", "t.response_b")})+t.eps`),
+    A("t.denominator", `${hinge?'':'t.daim+t.dbim+'}(${dot("t.ga", "t.response_a")})+(${dot("t.gb", "t.response_b")})+t.eps`),
     A("t.gw", `${angular ? "0" : `(${dot("t.n", "t.dbv")})-(${dot("t.n", "t.dav")})`}+(${dot("t.ga", "t.daw")})+(${dot("t.gb", "t.dbw")})`),
     A("t.gdelta", `${angular ? "0" : `(${dot("t.n", "t.dbdv")})-(${dot("t.n", "t.dadv")})`}+(${dot("t.ga", "t.dadw")})+(${dot("t.gb", "t.dbdw")})`),
     A("t.rhs", `-t.g*t.stiff-t.gw*t.relax${angular ? "" : "+t.bounce*math.max(0,-t.gw)"}${angular ? "" : `+(v.ragdoll_simulation_gravity_vector?-(${dot('v.gravity_step_','t.n')}):${gravityValue(dt)}*t.ny)*((t.dbim>0)-(t.daim>0))`}`),
@@ -319,10 +322,46 @@ function contactSolve() {
     ])])),A('t.phase','t.phase+1'),
   ])];
 }
+function hingeSolve(ids,pick){
+  return [
+    ...['a','b'].flatMap(side=>[
+      ...axes.map((k,n)=>pick('t.h_local'+k,ids.map(i=>JOINTS[i]['axis'+side.toUpperCase()][n]))),
+      ...quat.map(k=>A('t.h_bodyq'+k,choose('t.j'+side,BODIES.map((_,i)=>'v.b'+i+'q'+k)))),
+      rotate('t.h_axis_'+side,'t.h_bodyq','t.h_local'),
+      ...axes.map((k,n)=>pick('t.h_local'+k,ids.map(i=>JOINTS[i]['twistAxis'+side.toUpperCase()][n]))),
+      rotate('t.h_ref_'+side,'t.h_bodyq','t.h_local'),
+    ]),hingeFrame(),cross('t.h_tangent','t.h_axis_a','t.h_ref_a'),
+    A('t.h_transition',`math.max(0,1-v.age/${settings.poseTransition})`),
+    scale('t.h_error','t.h_error','math.max(0,t.h_swing-v.scratch_joint.swing*t.h_transition)/math.max(t.h_swing,0.000001)'),
+    A('t.relax',1),A('t.eps',4/(dt*dt*1e7*17)),A('t.stiff',.6/dt),A('t.lower',-1e6),A('t.upper',1e6),
+    // Two bilateral rows remove angular velocity perpendicular to the hinge.
+    // Their axes remain nonzero even when both ends are perfectly aligned.
+    A('t.h_row',0),Loop(2,[
+      axes.map(k=>A('t.gb'+k,'t.h_row?t.h_tangent'+k+':t.h_ref_a'+k)),scale('t.ga','t.gb',-1),
+      A('t.g',dot('t.h_error','t.gb')),A('t.lambda','t.h_row?v.scratch_joint.l4:v.scratch_joint.l3'),equation('t.lambda',true,true),
+      If('t.h_row',A('v.scratch_joint.l4','t.lambda'),A('v.scratch_joint.l3','t.lambda')),A('t.h_row','t.h_row+1'),
+    ]),
+    pick('t.h_min',ids.map(i=>JOINTS[i].minAngle)),pick('t.h_max',ids.map(i=>JOINTS[i].maxAngle)),
+    A('v.scratch_joint.hinge_angle',nearestAngle('t.h_angle','v.scratch_joint.hinge_angle')),
+    // A full turn is an unlimited hinge; otherwise use separate unilateral stops.
+    If('t.h_max-t.h_min<360',[
+      A('t.h_min','t.h_min+math.min(0,v.scratch_joint.hinge_initial-t.h_min)*t.h_transition'),
+      A('t.h_max','t.h_max+math.max(0,v.scratch_joint.hinge_initial-t.h_max)*t.h_transition'),
+      copy('t.gb','t.h_axis_a'),scale('t.ga','t.gb',-1),A('t.h_row',0),Loop(2,[
+        A('t.g','(v.scratch_joint.hinge_angle-(t.h_row?t.h_max:t.h_min))*0.017453292519943295'),
+        A('t.lower','t.h_row?-1000000:0'),A('t.upper','t.h_row?0:1000000'),
+        A('t.stiff',`(t.h_row?t.g>0:t.g<0)?${.3/dt}:${1/dt}`),
+        A('t.lambda','t.h_row?v.scratch_joint.l6:v.scratch_joint.l5'),equation('t.lambda',true,true),
+        If('t.h_row',A('v.scratch_joint.l6','t.lambda'),A('v.scratch_joint.l5','t.lambda')),A('t.h_row','t.h_row+1'),
+      ]),
+    ]),
+  ];
+}
 function jointSolve() {
   if (!JOINTS.length) return [];
   const ids=rig.jointOrder;
   const pick=(out,values)=>A(out,choose('t.joint_id',values));
+  const angular=cone=>!hasHinges?cone:JOINTS.every(j=>j.hinge===1)?hingeSolve(ids,pick):If(choose('t.joint_id',ids.map(i=>JOINTS[i].hinge)),hingeSolve(ids,pick),cone);
   return [A('t.joint_id',0),Loop(ids.length,[
     If(choose('t.joint_id',ids.map(i=>`v.joint_enabled_${i}`)),[
     pick('t.ja',ids.map(i=>JOINTS[i].a)),pick('t.jb',ids.map(i=>JOINTS[i].b)),
@@ -340,7 +379,7 @@ function jointSolve() {
       A('t.lambda',choose('t.row',[0,1,2].map(i=>'v.scratch_joint.l'+i))),equation('t.lambda'),dispatch('t.row',[0,1,2],i=>A('v.scratch_joint.l'+i,'t.lambda')),
       A('t.row','t.row+1'),
     ]),A('t.upper',0),
-    A('t.twist',0),Loop(2,[
+    angular([A('t.twist',0),Loop(2,[
       ...['a','b'].flatMap(side=>[
         ...axes.map((k,n)=>pick('t.local'+k,ids.map(i=>'t.twist?('+JOINTS[i]['twistAxis'+side.toUpperCase()][n]+'):('+JOINTS[i]['axis'+side.toUpperCase()][n]+')'))),
         ...quat.map(k=>A('t.jq'+k,choose('t.j'+side,BODIES.map((_,i)=>'v.b'+i+'q'+k)))),
@@ -352,7 +391,7 @@ function jointSolve() {
       A('t.g','math.cos(t.limit+math.max(0,t.initial_limit-t.limit)*math.max(0,1-v.age/'+settings.poseTransition+'))-('+dot('t.axis_a','t.axis_b')+')'),
       A('t.lambda','t.twist?v.scratch_joint.l4:v.scratch_joint.l3'),equation('t.lambda',true),If('t.twist',A('v.scratch_joint.l4','t.lambda'),A('v.scratch_joint.l3','t.lambda')),
       A('t.twist','t.twist+1'),
-    ]),saveDelta('t.da','t.ja'),saveDelta('t.db','t.jb'),dispatch('t.joint_id',ids,i=>A('v.j'+i,'v.scratch_joint'))]),A('t.joint_id','t.joint_id+1'),
+    ])]),saveDelta('t.da','t.ja'),saveDelta('t.db','t.jb'),dispatch('t.joint_id',ids,i=>A('v.j'+i,'v.scratch_joint'))]),A('t.joint_id','t.joint_id+1'),
   ])];
 }
 function solverChunks() {

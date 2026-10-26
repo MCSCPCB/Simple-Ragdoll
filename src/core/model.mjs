@@ -1,5 +1,5 @@
 import { choose } from "./expression.mjs";
-import { add, sub, scale, rotate, modelRotation, reflect, reflectRotation, identity, compose, boneTransform } from "./math.mjs";
+import { add, sub, scale, dot, rotate, modelRotation, reflect, reflectRotation, identity, compose, boneTransform } from "./math.mjs";
 
 import { fail } from "../i18n.js";
 const number=(v,label,min=-Infinity,max=Infinity)=>typeof v==="number"&&Number.isFinite(v)&&v>=min&&v<=max?v:fail("number",[label,min,max]);
@@ -88,15 +88,21 @@ export function normalizeModel(config,resources,client) {
     });
     const joints=Object.entries(config.joints??{}).map(([id,base])=>{
       const j={...base,...variant.joints?.[id]};
-      keys(j,["type","a","b","anchorA","anchorB","axisA","axisB","twistAxisA","twistAxisB","swing","twist","transitionAnchorA","transitionAnchorB"],`joint.${id}`);
-      if(j.type!=="coneTwist")fail("joint_type",[j.type]);
+      keys(j,["type","a","b","anchorA","anchorB","axisA","axisB","twistAxisA","twistAxisB","swing","twist","minAngle","maxAngle","transitionAnchorA","transitionAnchorB"],`joint.${id}`);
+      if(!["coneTwist","hinge"].includes(j.type))fail("joint_type",[j.type]);
       const a=bodyIds.indexOf(j.a),b=bodyIds.indexOf(j.b);if(a<0||b<0||a===b)fail("joint_body",[id]);
       const anchor=(side,index)=>scale(reflect(j['anchor'+side]?vec(j['anchor'+side],id):sub(bodies[b].pivot,bodies[index].modelCenter)),visualScale/16);
       const axisA=reflect(normalizeAxis(j.axisA??[0,1,0],id)),axisB=reflect(normalizeAxis(j.axisB??j.axisA??[0,1,0],id));
-      const twistAxisA=reflect(normalizeAxis(j.twistAxisA??[-1,0,0],id)),twistAxisB=reflect(normalizeAxis(j.twistAxisB??j.twistAxisA??[-1,0,0],id));
+      let twistAxisA=reflect(normalizeAxis(j.twistAxisA??[-1,0,0],id)),twistAxisB=reflect(normalizeAxis(j.twistAxisB??j.twistAxisA??[-1,0,0],id));
+      const hinge=Number(j.type==='hinge'),minAngle=number(j.minAngle??-(j.twist??22.5),`${id}.minAngle`,-180,180),maxAngle=number(j.maxAngle??(j.twist??22.5),`${id}.maxAngle`,-180,180);
+      if(minAngle>maxAngle)fail('joint_limits',[id]);
+      if(hinge){
+        const perpendicular=(ref,axis)=>{const p=sub(ref,scale(axis,dot(ref,axis)));if(Math.hypot(...p)<1e-6)fail('joint_axis',[id]);return normalizeAxis(p,id);};
+        twistAxisA=perpendicular(twistAxisA,axisA);twistAxisB=perpendicular(twistAxisB,axisB);
+      }
       return {id,a,b,anchorA:anchor("A",a),anchorB:anchor("B",b),axisA,axisB,twistAxisA,twistAxisB,
         transitionAnchorA:scale(reflect(vec(j.transitionAnchorA??[0,0,0],id)),visualScale/16),transitionAnchorB:scale(reflect(vec(j.transitionAnchorB??[0,0,0],id)),visualScale/16),
-        swing:number(j.swing??45,id,0,180),twist:number(j.twist??22.5,id,0,180)};
+        swing:number(j.swing??45,id,0,180),twist:number(j.twist??22.5,id,0,180),hinge,minAngle,maxAngle};
     });
     for(const key of Object.keys(variant.joints??{}))if(!joints.some(j=>j.id===key))fail("variant_joint",[key]);
     return {geometry:geometryId,when:variant.when,scale:visualScale,bodies,joints};

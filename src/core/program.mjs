@@ -3,6 +3,7 @@ import { groupVariables, lowerRecords } from "./storage.mjs";
 import { compilePrograms } from "./compute.mjs";
 import { A, If, axes, quat, set, vector, copy, add, sub, scale, dot, rotate, multiply, normalize, axisRotation } from "./expression.mjs";
 import { createDynamics } from "./dynamics.mjs";
+import { hingeActivation } from "./hinge.mjs";
 import { createInputs } from "./input.mjs";
 import { createLiquids } from "./liquids.mjs";
 import { createResults } from "./results.mjs";
@@ -112,6 +113,7 @@ export function activate(rig) {
         vector("t.axis",twist?j.twistAxisB:j.axisB),rotate("t.axis_b",`v.b${j.b}q`,"t.axis"),
         A(`v.j${i}${twist?"twist":"swing"}`,`math.acos(math.clamp(${dot("t.axis_a","t.axis_b")},-1,1))`),
       ]),
+      ...(j.hinge===0?[]:j.hinge===1?hingeActivation(j,i):[If(j.hinge,hingeActivation(j,i))]),
     ]),
     gaussian("t.spin_xa",s.initialSpin),gaussian("t.spin_ya",s.initialSpin),gaussian("t.spin_xb",s.initialSpin),gaussian("t.spin_yb",s.initialSpin),
     vector("v.spin",["(t.spin_xa+t.spin_xb)*3.141592653589793","(t.spin_ya+t.spin_yb)*3.141592653589793",0]),

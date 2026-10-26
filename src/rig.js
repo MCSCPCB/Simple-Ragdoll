@@ -4,7 +4,7 @@ import { fail } from './i18n.js';
 
 // Shared fields live on the base entry; geometry-dependent fields (center, mass, shapes, anchors, axes) are stored per model variant.
 export const SHARED_BODY=['bone','density','friction','restitution','linearDamping','angularDamping'];
-export const SHARED_JOINT=['type','a','b','swing','twist'];
+export const SHARED_JOINT=['type','a','b','swing','twist','minAngle','maxAngle'];
 const AXES=['axisA','axisB','twistAxisA','twistAxisB'],DEFAULT_AXIS=[0,1,0],DEFAULT_TWIST=[-1,0,0];
 const copy=value=>JSON.parse(JSON.stringify(value));
 export const fine=v=>v.map(n=>Math.abs(n)<1e-10?0:Number(n.toFixed(10)));
@@ -13,6 +13,15 @@ const angle=(u,v)=>{const a=unit(u),b=unit(v);return a&&b?Math.acos(Math.max(-1,
 
 export const effective=(config,v,kind,id)=>({...config[kind][id],...config.variants[v][kind]?.[id]});
 export function setShared(config,kind,id,key,value){config[kind][id][key]=value;for(const variant of config.variants)delete variant[kind]?.[id]?.[key];}
+export function setJointType(config,id,type){
+  if(!['coneTwist','hinge'].includes(type))fail('joint_type',[type]);
+  const joint=config.joints[id];
+  if(type==='hinge'){
+    if(joint.minAngle===undefined)setShared(config,'joints',id,'minAngle',-(joint.twist??22.5));
+    if(joint.maxAngle===undefined)setShared(config,'joints',id,'maxAngle',joint.twist??22.5);
+  }
+  setShared(config,'joints',id,'type',type);
+}
 export function setLocal(config,v,kind,id,key,value){const variant=config.variants[v];((variant[kind]??={})[id]??={})[key]=value;}
 export function clearLocal(config,v,kind,id,key){
   const base=config[kind][id];

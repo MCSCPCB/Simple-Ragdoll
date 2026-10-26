@@ -323,7 +323,7 @@ export class Controller {
       const frame=rig.jointFrame(config,info,v,sel.joint),j=rig.effective(config,v,'joints',sel.joint);if(!frame)return null;
       return {type:'joint',id:sel.joint,a:j.a,b:j.b,bodies:Object.keys(config.bodies),position:rig.displayVector(frame.position),rotation:rig.displayRotation(frame.rotation),
         customPosition:Math.hypot(...sub(frame.position,info.bodies[j.b].pivot))>1e-4,customRotation:frame.rotation.some(n=>Math.abs(n)>1e-4),
-        swing:j.swing??45,twist:j.twist??22.5,mismatch:frame.mismatch};
+        jointType:j.type,swing:j.swing??45,twist:j.twist??22.5,minAngle:j.minAngle??-(j.twist??22.5),maxAngle:j.maxAngle??(j.twist??22.5),mismatch:frame.mismatch};
     }
     return null;
   }
@@ -378,7 +378,8 @@ export class Controller {
       case 'joint.position':return (config,{infos,variant})=>rig.setJointPosition(config,infos,variant,joint,rig.displayVector(value));
       case 'joint.rotation':return (config,{infos,variant})=>rig.setJointRotation(config,infos,variant,joint,modelRotation(rig.displayRotation(value)));
       case 'joint.a':case 'joint.b':return (config,{infos})=>rig.setJointBody(config,infos,joint,key.slice(6),value);
-      case 'swing':case 'twist':return config=>rig.setShared(config,'joints',joint,key,Number(value));
+      case 'joint.type':return config=>rig.setJointType(config,joint,value);
+      case 'swing':case 'twist':case 'minAngle':case 'maxAngle':return config=>rig.setShared(config,'joints',joint,key,Number(value));
     }
     fail('unexpected',[key]);
   }

@@ -20,7 +20,11 @@ const NumberInput={
     });
     this.$el.append(this.slider.node);this.slider.update();
   },
-  watch:{value(){this.slider?.update();}},
+  watch:{
+    value(){this.slider?.update();},
+    min(value){if(this.slider){this.slider.settings.min=value;this.slider.update();}},
+    max(value){if(this.slider){this.slider.settings.max=value;this.slider.update();}}
+  },
   beforeDestroy(){this.slider?.delete();this.slider=null;},
   template:`<div class="rg-number-input"></div>`
 };
@@ -106,6 +110,7 @@ const JOINT=`<template v-else-if="p.type==='joint'">
   <h3 class="rg-heading"><i class="material-icons">adjust</i><span class="rg-ellipsis">{{ p.id }}</span></h3>
   <div v-if="p.mismatch" class="rg-warning"><p>{{ t('mismatch') }}</p><button @click="run('alignJoint',p.id)">{{ t('align_joint') }}</button></div>
   <section><h4>{{ t('section_connection') }}</h4>
+    <label class="rg-field"><span>{{ t('joint_type') }}</span><select-input :value="p.jointType" :options="{coneTwist:t('joint_ball'),hinge:t('joint_hinge')}" @input="set('joint.type',$event)"></select-input></label>
     <label class="rg-field" :title="t('joint_body_tip')"><span>{{ t('joint_a') }}</span><select-input :value="p.a" :options="others(p.b)" @input="set('joint.a',$event)"></select-input></label>
     <label class="rg-field" :title="t('joint_body_tip')"><span>{{ t('joint_b') }}</span><select-input :value="p.b" :options="others(p.a)" @input="set('joint.b',$event)"></select-input></label>
   </section>
@@ -114,8 +119,14 @@ const JOINT=`<template v-else-if="p.type==='joint'">
     <rg-vector :label="t('orientation')" :value="p.rotation" :step="1" :reset="p.customRotation" :reset-tip="t('reset_rotation')" @preview="draft('joint.rotation',$event)" @cancel="restore" @change="set('joint.rotation',$event)" @reset="run('resetJointRotation',p.id)"></rg-vector>
   </section>
   <section><h4>{{ t('section_limits') }}</h4>
-    <rg-field :label="t('swing')" :tip="t('swing_tip')" :value="p.swing" :min="0" :max="180" :step="1" @preview="draft('swing',$event)" @cancel="restore" @change="set('swing',$event)"></rg-field>
-    <rg-field :label="t('twist')" :tip="t('twist_tip')" :value="p.twist" :min="0" :max="180" :step="1" @preview="draft('twist',$event)" @cancel="restore" @change="set('twist',$event)"></rg-field>
+    <template v-if="p.jointType==='hinge'">
+      <rg-field :label="t('hinge_min')" :tip="t('hinge_limit_tip')" :value="p.minAngle" :min="-180" :max="p.maxAngle" :step="1" @preview="draft('minAngle',$event)" @cancel="restore" @change="set('minAngle',$event)"></rg-field>
+      <rg-field :label="t('hinge_max')" :tip="t('hinge_limit_tip')" :value="p.maxAngle" :min="p.minAngle" :max="180" :step="1" @preview="draft('maxAngle',$event)" @cancel="restore" @change="set('maxAngle',$event)"></rg-field>
+    </template>
+    <template v-else>
+      <rg-field :label="t('swing')" :tip="t('swing_tip')" :value="p.swing" :min="0" :max="180" :step="1" @preview="draft('swing',$event)" @cancel="restore" @change="set('swing',$event)"></rg-field>
+      <rg-field :label="t('twist')" :tip="t('twist_tip')" :value="p.twist" :min="0" :max="180" :step="1" @preview="draft('twist',$event)" @cancel="restore" @change="set('twist',$event)"></rg-field>
+    </template>
   </section>
   <div class="rg-buttons"><button @click="run('removeJoint',p.id)">{{ t('remove_joint') }}</button></div>
 </template>`;

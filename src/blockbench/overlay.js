@@ -43,16 +43,20 @@ export class Overlay {
   marker(position,color,radius){const node=new THREE.Mesh(new THREE.SphereGeometry(radius,8,6),new THREE.MeshBasicMaterial({color}));node.position.fromArray(position);return node;}
   // Swing cone around the frame Y axis and the twist range around the reference direction.
   limits(frame,position){
-    const {swing,twist}=frame.ends.joint,root=new THREE.Object3D(),length=3,s=(swing??45)*Math.PI/180,w=(twist??22.5)*Math.PI/180;
+    const {type,swing,twist,minAngle,maxAngle}=frame.ends.joint,hinge=type==='hinge',root=new THREE.Object3D(),length=3,s=(swing??45)*Math.PI/180,w=(twist??22.5)*Math.PI/180;
     root.position.fromArray(position);root.quaternion.copy(threeQuaternion(frame.quaternion));
     const line=(points,color,segments=false)=>{const g=new THREE.BufferGeometry().setFromPoints(points),m=new THREE.LineBasicMaterial({color,opacity:.8});return segments?new THREE.LineSegments(g,m):new THREE.Line(g,m);};
     const rim=[],spokes=[];
     for(let i=0;i<=48;i++){const a=i/48*Math.PI*2;rim.push(new THREE.Vector3(Math.cos(a)*Math.sin(s)*length,Math.cos(s)*length,Math.sin(a)*Math.sin(s)*length));}
     for(let i=0;i<4;i++)spokes.push(new THREE.Vector3(),rim[i*12]);
     const arc=[new THREE.Vector3()];
-    for(let i=0;i<=16;i++){const a=-w+2*w*i/16;arc.push(new THREE.Vector3(Math.cos(a)*length*.8,0,Math.sin(a)*length*.8));}
+    const lo=hinge?(minAngle??-(twist??22.5))*Math.PI/180:-w,hi=hinge?(maxAngle??(twist??22.5))*Math.PI/180:w;
+    // Physics-to-preview flips X and Z, so positive rotation from the red
+    // reference arrow points toward -Z in this displayed joint frame.
+    for(let i=0;i<=32;i++){const a=lo+(hi-lo)*i/32;arc.push(new THREE.Vector3(Math.cos(a)*length*.8,0,-Math.sin(a)*length*.8));}
     arc.push(new THREE.Vector3());
-    root.add(line(rim,COLOR.swing),line(spokes,COLOR.swing,true),line(arc,COLOR.twist));
+    if(!hinge)root.add(line(rim,COLOR.swing),line(spokes,COLOR.swing,true));
+    root.add(line(arc,COLOR.twist));
     root.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0),new THREE.Vector3(),length*1.2,COLOR.swing,.6,.3));
     root.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(),length,COLOR.twist,.5,.25));
     return root;
