@@ -42,8 +42,6 @@ const Vector={
 
 const ENTITY=`<template v-if="p.type==='entity'">
   <h3 class="rg-heading"><i class="material-icons">accessibility_new</i><span class="rg-ellipsis">{{ s.entity }}</span></h3>
-  <section><h4>{{ t('section_entity') }}</h4>
-  </section>
   <section><h4>{{ t('section_trigger') }}</h4>
     <template v-for="kind in ['trigger','release']">
       <label class="rg-field" :key="kind"><span>{{ t(kind) }}</span><select-input :value="preset(kind)" :options="options(kind)" @input="choose(kind,$event)"></select-input></label>
