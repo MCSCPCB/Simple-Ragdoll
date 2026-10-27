@@ -466,7 +466,6 @@
     {
       "when": "q.is_baby",
       "geometry": "baby",
-      "scale": 1,
       "bodies": {
         "body": {
           "center": [
@@ -742,8 +741,7 @@
       }
     },
     {
-      "geometry": "default",
-      "scale": 0.9375
+      "geometry": "default"
     }
   ]
 }

@@ -7,6 +7,7 @@ import { hingeActivation } from "./hinge.mjs";
 import { createInputs } from "./input.mjs";
 import { createLiquids } from "./liquids.mjs";
 import { createResults } from "./results.mjs";
+import { worldSpace, worldRig } from './space.mjs';
 
 const quaternion=(out,values)=>quat.map((k,i)=>A(out+k,values[i]));
 const inverse=(out,q)=>[scale(out,q,-1),A(out+"w",q+"w")];
@@ -54,8 +55,10 @@ export function deathPrograms() {
   };
 }
 
-export function poseCapture(rig,normalScale) {
-  return [A("v.pose_valid",1),A("v.pose_scale",normalScale),A("v.pose_yaw","q.body_y_rotation"),
+export function poseCapture(rig) {
+  // Native bone queries expose the last evaluated pose, so use that frame's
+  // model-to-world conversion rather than a size expression changed by damage.
+  return [A("v.pose_valid",1),A("v.pose_to_world","v.previous_to_world"),A("v.pose_yaw","q.body_y_rotation"),
     rig.bodies.map((body,i)=>[
       A("t.bone",`q.bone_orientation_trs('${body.bone.toLowerCase()}')`),
       // Zero scale hides bones, but its singular matrix has no usable rotation.
@@ -95,12 +98,12 @@ function gaussian(out,amount) {
 }
 export function activate(rig) {
   const {bodies,joints,simulation:s}=rig,poseKeys=[...axes,...quat.map(k=>"q"+k)];
-  return [set("v.",{active:1,activated:1,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0}),copy("v.o","v.e"),A("v.model_scale",rig.scale),axisRotation("t.entityq","y","-v.pose_yaw"),
+  return [set("v.",{active:1,activated:1,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0}),copy("v.o","v.e"),worldSpace(rig).capture,axisRotation("t.entityq","y","-v.pose_yaw"),
     bodies.map((body,i)=>{
       const b=`v.b${i}`,p=`v.pose${i}`;
       // 查询位移是动画后的枢轴位置，质心偏移以骨骼枢轴为原点。
       return [vector("t.center",body.modelCenter.map((n,k)=>`((${n})-(${body.pivot[k]}))*${p}s${axes[k]}`)),rotate("t.center",p+"q","t.center"),add("t.center","t.center",p+"t"),
-        A("t.centerz","-t.centerz"),scale("t.center","t.center","v.pose_scale/16"),rotate(b,"t.entityq","t.center"),
+        A("t.centerz","-t.centerz"),scale("t.center","t.center","v.pose_to_world"),rotate(b,"t.entityq","t.center"),
         reflected("t.physicalq",p+"q"),multiply(b+"q","t.entityq","t.physicalq"),
       ];
     }),
@@ -133,48 +136,46 @@ function interpolatedBodies(rig) {
 
 export function boneOutput(rig,index) {
   const body=rig.bodies[index],parent=body.parent;
+  const units=parent<0?'v.frame_to_world':'v.body_to_world',size=parent<0?'v.body_to_world/v.frame_to_world':'1';
   const transform=(i,out)=>[
     axisRotation("t.entity_inverse","y","q.body_y_rotation"),
-    // model_scale is the actor's model-unit scale (normally 1/16), including
-    // behavior-pack scaling. World-space anchor compensation must undo it too.
-    // Preview has no actor scale query and uses the normal model-unit scale.
-    // Bedrock only accepts a variable on the left of ??, not a query.
-    A('t.actor_model_scale','q.model_scale'),
-    A('t.actor_scale','math.max(0.000001,(t.actor_model_scale??0.0625)*16)'),
-    axes.map(k=>A("t.center"+k,`(v.o${k}-v.anchor_r${k})/t.actor_scale+v.render${i}${k}`)),
-    rotate(out+"c","t.entity_inverse","t.center"),scale(out+"c",out+"c","16/v.model_scale"),A(out+"cz",`-${out}cz`),
+    // Origin, interpolated actor position and simulated body position are all
+    // blocks. Convert the complete displacement, never only the actor movement.
+    axes.map(k=>A("t.center"+k,`v.o${k}-v.anchor_r${k}+v.render${i}${k}`)),
+    rotate(out+"c","t.entity_inverse","t.center"),scale(out+"c",out+"c",`1/(${units})`),A(out+"cz",`-${out}cz`),
     multiply("t.physicalq","t.entity_inverse",`v.render${i}q`),reflected(out+"q","t.physicalq"),
     // 死亡侧翻是模型外层变换，由物理根骨骼同时补偿位置和朝向，子骨骼继承。
     ...(parent<0?[If("!q.is_alive",[
       axisRotation("t.death_inverse","z","math.min(math.sqrt(math.max(0,math.lerp(v.death_previous,v.death_current,math.clamp(q.frame_alpha,0,1)))/20*1.6),1)*90"),
       rotate(out+"c","t.death_inverse",out+"c"),multiply(out+"q","t.death_inverse",out+"q"),
     ])]:[]),
-    vector("t.bind_center",rig.bodies[i].modelCenter),rotate("t.bind_center",out+"q","t.bind_center"),sub(out+"t",out+"c","t.bind_center"),
+    vector("t.bind_center",rig.bodies[i].modelCenter,size),rotate("t.bind_center",out+"q","t.bind_center"),sub(out+"t",out+"c","t.bind_center"),
   ];
   return [transform(index,"t.body_"),
     ...(parent>=0?transform(parent,"t.parent_"):[quaternion("t.parent_q",[0,0,0,1]),vector("t.parent_t",[0,0,0])]),
     vector("t.chain_t",body.parentTransform.t),rotate("t.chain_t","t.parent_q","t.chain_t"),add("t.parent_t","t.parent_t","t.chain_t"),
     quaternion("t.chain_q",body.parentTransform.q),multiply("t.parent_q","t.parent_q","t.chain_q"),inverse("t.parent_inverse","t.parent_q"),
     sub("t.local_center","t.body_c","t.parent_t"),rotate("t.local_center","t.parent_inverse","t.local_center"),multiply("t.local_q","t.parent_inverse","t.body_q"),
-    vector("t.pivot",body.pivot),vector("t.offset",body.modelCenter.map((n,k)=>`(${n})-(${body.pivot[k]})`)),rotate("t.offset","t.local_q","t.offset"),
+    vector("t.pivot",body.pivot),vector("t.offset",body.modelCenter.map((n,k)=>`(${n})-(${body.pivot[k]})`),size),rotate("t.offset","t.local_q","t.offset"),
     axes.map(k=>A(`v.out${index}p${k}`,`t.local_center${k}-t.pivot${k}-t.offset${k}`)),
     modelEuler(`v.out${index}r`,"t.local_q"),axes.map((k,j)=>A(`v.out${index}r${k}`,`v.out${index}r${k}-(${body.bindRotation[j]})`)),
   ];
 }
 
-export function createProgram(rig, {preview=false,reservedNames=[],id="generated"}={}) {
+export function createProgram(model, {preview=false,reservedNames=[],id="generated"}={}) {
+  const rig=worldRig(model),space=worldSpace(model);
   const s=rig.simulation,dt=1/s.frequency,anchor=anchorPrograms(),death=deathPrograms(),d=createDynamics(rig,s),input=createInputs(rig),liquids=createLiquids(rig),results=createResults(rig,reservedNames),poseKeys=[...axes,...quat.map(k=>"q"+k)];
   let variant=String(rig.variants.length-1);
   for(let i=rig.variants.length-2;i>=0;i--)variant=`(${rig.variants[i].when})?${i}:(${variant})`;
-  let initialize=[set("v.",{active:0,activated:0,variant:0,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0,has_position:0,pose_valid:0,frames:0,model_scale:1}),
+  let initialize=[set("v.",{active:0,activated:0,variant:0,accum:0,sleep:0,tick:0,age:0,steps:0,alpha:0,has_position:0,pose_valid:0,frames:0}),space.initialize,
     vector("v.last_",[0,0,0]),anchor.initialize,death.initialize,input.initialize,liquids.initialize,results.initialize,
     rig.bodies.map((_,i)=>[set(`v.b${i}`,Object.fromEntries([...poseKeys,...poseKeys.map(k=>"prev"+k),...poseKeys.map(k=>"old"+k),...axes.flatMap(k=>["v"+k,"w"+k])].map(k=>[k,k.endsWith("qw")?1:0]))),
       vector(`v.render${i}`,[0,0,0]),quaternion(`v.render${i}q`,[0,0,0,1])]),d.initializeDynamics()];
-  const begin=[death.frame,axes.map((k,i)=>A("v.e"+k,`q.position(${i})`)),anchor.frame,A("v.steps",0),A("v.activated",0),
+  const begin=[space.frame,death.frame,axes.map((k,i)=>A("v.e"+k,`q.position(${i})`)),anchor.frame,A("v.steps",0),A("v.activated",0),
     axes.map(k=>A("v.input_"+k,`v.has_position?(v.e${k}-v.last_${k})/math.max(q.delta_time,0.001):0`)),copy("v.last_","v.e"),A("v.has_position",1),
     input.frame,
     If(`v.active&&(v.ragdoll_control_mode==2||(v.ragdoll_control_mode==0&&(${rig.release})))`,[A("v.active",0),A("v.accum",0),A("v.pose_valid",0),A("v.frames",0)]),
-    If("!v.active",[A("v.variant",variant),If("v.frames>0",[poseCapture(rig,rig.scale),hiddenPoseFallback(rig)]),
+    If("!v.active",[A("v.variant",variant),If("v.frames>0",[poseCapture(rig),hiddenPoseFallback(rig)]),
       If(`(v.ragdoll_control_mode==1||v.ragdoll_control_mode==3||(v.ragdoll_control_mode==0&&(${rig.trigger})))&&v.pose_valid`,activate(rig)),A("v.frames","v.frames+1")]),
     input.properties,input.motion,
     If("v.active&&!v.activated&&v.ragdoll_control_mode!=3&&v.ragdoll_simulation_time_scale>0",[A("v.accum",`math.min(v.accum+math.max(q.delta_time,0)*math.clamp(v.ragdoll_simulation_time_scale,0,2),${dt*3})`),A("v.steps",`math.floor(v.accum*${s.frequency}+0.00001)`),A("v.accum",`math.max(0,v.accum-v.steps*${dt})`),A("v.alpha",`math.clamp(v.accum*${s.frequency},0,1)`)]),
@@ -187,14 +188,14 @@ export function createProgram(rig, {preview=false,reservedNames=[],id="generated
     If(`v.sleep>=${sleepTicks}`,rig.bodies.map((_,i)=>[vector(`v.b${i}v`,[0,0,0]),vector(`v.b${i}w`,[0,0,0]),If("v.was_sleeping",copy(`v.b${i}`,`v.b${i}prev`,poseKeys),copy(`v.b${i}prev`,`v.b${i}`,poseKeys))]))];
   const anchors=rig.joints.map((j,i)=>[...["A","B"].map(side=>axes.map((k,n)=>A(`v.j${i}${side.toLowerCase()}${k}`,`v.j${i}base_${side.toLowerCase()}${k}+(${j['transitionAnchor'+side][n]})*math.max(0,1-v.age/${s.poseTransition})`)))]);
   const dynamics=[[anchors,d.prepareBodies()],d.bodyContacts(),d.terrainContacts(),d.sortContacts(),...d.solverChunks(),results.contacts,d.integrateBodies(),finish];
-  let frameBlocks=[compactBegin(rig,begin,poseCapture(rig,rig.scale),activate(rig),hiddenPoseFallback(rig)),
+  let frameBlocks=[compactBegin(rig,begin,poseCapture(rig),activate(rig),hiddenPoseFallback(rig)),
     ...Array.from({length:3},(_,i)=>[If('v.active&&v.steps>'+i,[tick,If('v.awake',dynamics)])]),
     [If('v.active',[interpolatedBodies(rig),compactOutput(rig,boneOutput)]),results.frame]];
   let rootOutputs=rig.bodies.map((_,i)=>boneOutput(rig,i));
   const lowered=lowerRecords({initialize:groupVariables(initialize),frame:frameBlocks.map(groupVariables),rootOutputs:rootOutputs.map(groupVariables)});
   initialize=lowered.initialize;frameBlocks=lowered.frame;rootOutputs=lowered.rootOutputs;
   if(preview)return {initialize,frameChunks:frameBlocks,rootOutputs};
-  return compilePrograms([{name:id,rig,initialize,frameChunks:frameBlocks,rootOutputs}],{reservedNames})[0];
+  return compilePrograms([{name:id,rig:model,initialize,frameChunks:frameBlocks,rootOutputs}],{reservedNames})[0];
 }
 
 export const testMath={...Object.fromEntries(["sqrt","abs","min","max","floor","ln","pow"].map(k=>[k,k==="ln"?Math.log:Math[k]])),random:(a,b)=>a+(b-a)*Math.random(),

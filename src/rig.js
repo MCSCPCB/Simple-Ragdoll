@@ -66,7 +66,7 @@ export function inspect(config,{resources,client}){
         shapes:raw.shapes?copy(raw.shapes):defaultShapes(bones.get(body.bone)),explicitMass:raw.mass!==undefined,explicitCenter:raw.center!==undefined,
         density:raw.density??config.defaults?.density??1,friction:body.friction,restitution:body.restitution,linearDamping:body.linearDamping,angularDamping:body.angularDamping}];
     }));
-    return {geometry,frames,bones,scale:variant.scale,bodies};
+    return {geometry,frames,bones,bodies};
   });
 }
 
@@ -160,7 +160,7 @@ export function setBody(config,v,id,key,value){if(SHARED_BODY.includes(key))setS
 export function setMassMode(config,infos,v,id,mode){
   const body=infos[v].bodies[id];
   if(mode==='mass'){setLocal(config,v,'bodies',id,'mass',Number(body.mass.toPrecision(6)));return;}
-  const volume=body.shapes.reduce((n,s)=>n+s.size.reduce((a,b)=>a*b,1),0)*(infos[v].scale/16)**3;
+  const volume=body.shapes.reduce((n,s)=>n+s.size.reduce((a,b)=>a*b,1),0)/16**3;
   clearLocal(config,v,'bodies',id,'mass');
   if(volume>0)setShared(config,'bodies',id,'density',Number((body.mass/volume).toPrecision(6)));
 }
@@ -295,9 +295,4 @@ export function autoCollisionPairs(config,env){
     if(models.every(boxes=>boxes[ids[i]].every(a=>boxes[ids[k]].every(b=>separation(a,b)>threshold))))pairs.push([ids[i],ids[k]]);
   }
   return pairs;
-}
-// Variants that share one scale keep sharing it.
-export function setScale(config,v,value){
-  const same=config.variants.every(x=>(x.scale??1)===(config.variants[v].scale??1));
-  config.variants.forEach((x,i)=>{if(same||i===v)x.scale=value;});
 }

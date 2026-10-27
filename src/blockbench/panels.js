@@ -43,7 +43,6 @@ const Vector={
 const ENTITY=`<template v-if="p.type==='entity'">
   <h3 class="rg-heading"><i class="material-icons">accessibility_new</i><span class="rg-ellipsis">{{ s.entity }}</span></h3>
   <section><h4>{{ t('section_entity') }}</h4>
-    <rg-field :label="t('scale')" :tip="t('scale_tip')" :value="s.variants[s.variant].scale" :min=".001" :max="100" :step=".0625" @change="set('scale',$event)"></rg-field>
   </section>
   <section><h4>{{ t('section_trigger') }}</h4>
     <template v-for="kind in ['trigger','release']">

@@ -1,4 +1,5 @@
 import { choose } from "./expression.mjs";
+import { clientSize } from './space.mjs';
 import { add, sub, scale, dot, rotate, modelRotation, reflect, reflectRotation, identity, compose, boneTransform } from "./math.mjs";
 
 import { fail } from "../i18n.js";
@@ -40,7 +41,7 @@ export function normalizeModel(config,resources,client) {
   if(bodyIds.some(id=>!/^[a-zA-Z_]\w*$/.test(id)))fail("body_id");
   const defaults={friction:0.3,restitution:0,linearDamping:0.01,angularDamping:0.01,density:1,...config.defaults};
   keys(defaults,["friction","restitution","linearDamping","angularDamping","density"],"defaults");
-  const variants=config.variants??[{geometry:"default",scale:1}];
+  const variants=config.variants??[{geometry:"default"}];
   if(!variants.length||variants.filter(v=>v.when===undefined).length!==1||variants.at(-1).when!==undefined)fail("variants");
   const bones=bodyIds.map(id=>config.bodies[id].bone), bodyByBone=new Map();
   for(const [i,bone] of bones.entries()){if(typeof bone!=="string"||!bone||bone.includes("'"))fail("bone_name",[bodyIds[i]]);if(bodyByBone.has(bone))fail("duplicate_bone",[bone]);bodyByBone.set(bone,i);}
@@ -50,7 +51,7 @@ export function normalizeModel(config,resources,client) {
     const geometryId=client.geometry?.[variant.geometry]??variant.geometry,geometry=resources.geometries.get(geometryId);
     if(!geometry)fail("geometry",[geometryId]);
     if(!Object.values(client.geometry??{}).includes(geometryId))fail("geometry_reference",[geometryId]);
-    const visualScale=number(variant.scale??1,"variant.scale",0.001,100);
+    // Legacy variant.scale is accepted for loading, but never changes geometry.
     const boneMap=new Map(geometry.bones.map(b=>[b.name,b]));
     if(boneMap.size!==geometry.bones.length)fail("duplicate_geometry_bone",[geometryId]);
     const visit=(name,trail=[])=>{if(trail.includes(name))fail("bone_cycle",[name]);const b=boneMap.get(name);if(!b)fail("bone_missing",[name]);if(b.parent)visit(b.parent,[...trail,name]);};
@@ -75,15 +76,15 @@ export function normalizeModel(config,resources,client) {
         return {center:add(pivot,rotate(q,sub(center,pivot))),size,q,volume:size.reduce((a,b)=>a*b,1)};
       });
       const volume=boxes.reduce((n,b)=>n+b.volume,0),center=input.center?vec(input.center,`${id}.center`):[0,1,2].map(k=>boxes.reduce((n,b)=>n+b.center[k]*b.volume,0)/volume);
-      const mass=number(input.mass??material.density*volume*(visualScale/16)**3,`${id}.mass`,1e-12,1e12);
-      const shapes=boxes.map(s=>({center:scale(reflect(sub(s.center,center)),visualScale),half:scale(s.size,visualScale/2),quaternion:reflectRotation(s.q)}));
+      const mass=number(input.mass??material.density*volume/16**3,`${id}.mass`,1e-12,1e12);
+      const shapes=boxes.map(s=>({center:reflect(sub(s.center,center)),half:scale(s.size,1/2),quaternion:reflectRotation(s.q)}));
       const extents=shapes.map(s=>[0,1,2].map(k=>[0,1,2].reduce((n,a)=>n+Math.abs(rotate(s.quaternion,[0,1,2].map(x=>x===a?1:0))[k])*s.half[a],0)));
       const half=[0,1,2].map(k=>(Math.max(...shapes.map((s,j)=>s.center[k]+extents[j][k]))-Math.min(...shapes.map((s,j)=>s.center[k]-extents[j][k])))/2);
       let parent=bone.parent,parentTransform=identity(),chain=[];
       while(parent&&!bodyByBone.has(parent)){chain.unshift(boneMap.get(parent));parent=boneMap.get(parent).parent;}
       for(const b of chain)parentTransform=compose(parentTransform,boneTransform(b));
       return {id,name:id,bone:bones[i],modelCenter:center,pivot:bone.pivot??[0,0,0],bindRotation:bone.rotation??[0,0,0],parent:parent?bodyByBone.get(parent):-1,parentTransform,
-        mass,inverseMass:1/mass,inverseInertia:half.map((_,k)=>3/(mass*(half[(k+1)%3]**2+half[(k+2)%3]**2))),shapes,
+        mass,massFromDensity:Number(input.mass===undefined),inverseMass:1/mass,inverseInertia:half.map((_,k)=>3/(mass*(half[(k+1)%3]**2+half[(k+2)%3]**2))),shapes,
         ...Object.fromEntries(["friction","restitution","linearDamping","angularDamping"].map(k=>[k,material[k]]))};
     });
     const joints=Object.entries(config.joints??{}).map(([id,base])=>{
@@ -91,7 +92,7 @@ export function normalizeModel(config,resources,client) {
       keys(j,["type","a","b","anchorA","anchorB","axisA","axisB","twistAxisA","twistAxisB","swing","twist","minAngle","maxAngle","transitionAnchorA","transitionAnchorB"],`joint.${id}`);
       if(!["coneTwist","hinge"].includes(j.type))fail("joint_type",[j.type]);
       const a=bodyIds.indexOf(j.a),b=bodyIds.indexOf(j.b);if(a<0||b<0||a===b)fail("joint_body",[id]);
-      const anchor=(side,index)=>scale(reflect(j['anchor'+side]?vec(j['anchor'+side],id):sub(bodies[b].pivot,bodies[index].modelCenter)),visualScale/16);
+      const anchor=(side,index)=>scale(reflect(j['anchor'+side]?vec(j['anchor'+side],id):sub(bodies[b].pivot,bodies[index].modelCenter)),1/16);
       const axisA=reflect(normalizeAxis(j.axisA??[0,1,0],id)),axisB=reflect(normalizeAxis(j.axisB??j.axisA??[0,1,0],id));
       let twistAxisA=reflect(normalizeAxis(j.twistAxisA??[-1,0,0],id)),twistAxisB=reflect(normalizeAxis(j.twistAxisB??j.twistAxisA??[-1,0,0],id));
       const hinge=Number(j.type==='hinge'),minAngle=number(j.minAngle??-(j.twist??22.5),`${id}.minAngle`,-180,180),maxAngle=number(j.maxAngle??(j.twist??22.5),`${id}.maxAngle`,-180,180);
@@ -101,11 +102,11 @@ export function normalizeModel(config,resources,client) {
         twistAxisA=perpendicular(twistAxisA,axisA);twistAxisB=perpendicular(twistAxisB,axisB);
       }
       return {id,a,b,anchorA:anchor("A",a),anchorB:anchor("B",b),axisA,axisB,twistAxisA,twistAxisB,
-        transitionAnchorA:scale(reflect(vec(j.transitionAnchorA??[0,0,0],id)),visualScale/16),transitionAnchorB:scale(reflect(vec(j.transitionAnchorB??[0,0,0],id)),visualScale/16),
+        transitionAnchorA:scale(reflect(vec(j.transitionAnchorA??[0,0,0],id)),1/16),transitionAnchorB:scale(reflect(vec(j.transitionAnchorB??[0,0,0],id)),1/16),
         swing:number(j.swing??45,id,0,180),twist:number(j.twist??22.5,id,0,180),hinge,minAngle,maxAngle};
     });
     for(const key of Object.keys(variant.joints??{}))if(!joints.some(j=>j.id===key))fail("variant_joint",[key]);
-    return {geometry:geometryId,when:variant.when,scale:visualScale,bodies,joints};
+    return {geometry:geometryId,when:variant.when,bodies,joints};
   });
   for(const v of normalized.slice(1))for(let i=0;i<bodyIds.length;i++)if(v.bodies[i].shapes.length!==normalized[0].bodies[i].shapes.length||v.bodies[i].parent!==normalized[0].bodies[i].parent)fail("topology");
   const merge=values=>{
@@ -123,6 +124,6 @@ export function normalizeModel(config,resources,client) {
   const shapePairs=collisionPairs.flatMap(([a,b])=>shapes.flatMap((s,i)=>s.body===a?shapes.flatMap((t,j)=>t.body===b?[[i,j]]:[]):[]));
   const jointOrder=(config.jointOrder??joints.map(j=>j.id)).map(id=>joints.findIndex(j=>j.id===id));
   if(jointOrder.some(i=>i<0)||new Set(jointOrder).size!==joints.length||jointOrder.length!==joints.length)fail("joint_order");
-  return {bodies,joints,shapes,shapePairs,jointOrder,variants:normalized,scale:select(normalized.map(v=>v.scale)),simulation:sim,outputs:config.outputs??[],
+  return {bodies,joints,shapes,shapePairs,jointOrder,variants:normalized,clientSize:clientSize(client),simulation:sim,outputs:config.outputs??[],
     trigger:expression(config.trigger??"q.max_health>0&&q.health<q.max_health","trigger"),release:expression(config.release??"q.health>=q.max_health","release")};
 }

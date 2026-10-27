@@ -5,7 +5,6 @@ import { descriptionOf, relatedAnimations } from './resources.js';
 import { fail } from './i18n.js';
 import { boneFrames, fitShape, defaultLimits, autoCollisionPairs, inspect, alignJoint, effective, shapePosition, quaternionEuler, SHARED_BODY, SHARED_JOINT } from './rig.js';
 import { add, sub, rotate, multiply, modelRotation, conjugate } from './core/math.mjs';
-import { inferScale } from './scale.js';
 import { automaticBones } from './auto.js';
 
 export const clone=value=>JSON.parse(JSON.stringify(value));
@@ -32,7 +31,7 @@ export function entityRows(resources){
 export function autoConfig(client,resources,variants){
   const aliases=Object.keys(client.geometry),defaultAlias=aliases.includes('default')?'default':aliases[0];
   const models=variants??[{geometry:defaultAlias}];
-  const selected=models.map((v,i)=>({...v,scale:v.scale??inferScale(client,models,i)}));
+  const selected=models.map(({scale,...v})=>({...v}));
   const first=resources.geometries.get(client.geometry[selected.at(-1).geometry]);if(!first)fail('geometry',[selected.at(-1).geometry]);
   const bodies={},joints={},used=new Set(),byBone=new Map();
   const {chosen,largest,volume}=automaticBones(selected.map(v=>{const g=resources.geometries.get(client.geometry[v.geometry]);if(!g)fail('geometry',[v.geometry]);return g;}),relatedAnimations(resources,client));
@@ -69,7 +68,7 @@ export function variantConfig(config,index){
   const result=clone(config),variant=result.variants[index];
   for(const [id,overrides] of Object.entries(variant.bodies??{}))result.bodies[id]={...result.bodies[id],...overrides};
   for(const [id,overrides] of Object.entries(variant.joints??{}))result.joints[id]={...result.joints[id],...overrides};
-  result.variants=[{geometry:variant.geometry,scale:variant.scale}];return result;
+  result.variants=[{geometry:variant.geometry}];return result;
 }
 
 // Multiple boxes retain their relative layout within the new bone bounds.
@@ -97,7 +96,7 @@ export function selectModels(config,env,selected){
     const old=config.variants.findIndex(v=>v.geometry===selection.geometry);
     const geometry=env.resources.geometries.get(env.client.geometry[selection.geometry]??selection.geometry);
     if(!geometry)fail('geometry',[selection.geometry]);
-    const variant={...selection,scale:selection.scale??(old>=0?config.variants[old].scale:undefined)??inferScale(env.client,selected,index),bodies:{},joints:{}};
+    const variant={...selection,bodies:{},joints:{}};delete variant.scale;
     if(old>=0){
       for(const id of Object.keys(config.bodies))variant.bodies[id]=clone(local(config.bodies[id],config.variants[old].bodies?.[id],SHARED_BODY));
       for(const id of Object.keys(config.joints))variant.joints[id]=clone(local(config.joints[id],config.variants[old].joints?.[id],SHARED_JOINT));
@@ -112,7 +111,7 @@ export function selectModels(config,env,selected){
       variant.bodies[id]={...Object.fromEntries(Object.entries(values).filter(([key])=>SHARED_BODY.includes(key)&&key!=='bone')),shapes};
       if(before.explicitMass){
         const volume=boxes=>boxes.reduce((sum,s)=>sum+s.size.reduce((a,b)=>a*b,1),0);
-        variant.bodies[id].mass=before.mass*volume(shapes)/volume(before.shapes)*(variant.scale/source.scale)**3;
+        variant.bodies[id].mass=before.mass*volume(shapes)/volume(before.shapes);
       }
     }
     newIndices.push(index);return variant;

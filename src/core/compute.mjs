@@ -5,6 +5,7 @@ import {splitStatements} from './chunks.mjs';
 
 const profile='v.compute_profile',slot='v.compute_step';
 const flatten=nodes=>[nodes].flat(Infinity);
+const boneSize=(body,i)=>body.parent<0?`(1-v.pose${i}hidden)*v.body_to_world/v.frame_to_world`:`1-v.pose${i}hidden`;
 function assigned(nodes){
   const names=new Set();
   const visit=nodes=>{for(const n of flatten(nodes)){
@@ -79,7 +80,7 @@ export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
         return body.parent<0?source(rootOutputs[i],target)+'return '+value+';':value;
-      })])),scale:axes.map(()=>target==='molang'?namespace(`1-v.pose${i}hidden`):`1-v.pose${i}hidden`),
+      })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks,rootOutputs,source,animation,names:namespace.roots,
       initializeSources:initializeChunks.map(nodes=>source(nodes)),preAnimationSources:before.map(nodes=>source(nodes)),
@@ -131,7 +132,7 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
         return body.parent<0?source(rootOutputs[i],target)+'return '+value+';':value;
-      })])),scale:axes.map(()=>target==='molang'?namespace(`1-v.pose${i}hidden`):`1-v.pose${i}hidden`),
+      })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks:execution.map(c=>c.nodes),rootOutputs,source,animation,names:namespace.roots,
       initializeSources:initializeChunks.map(nodes=>source(nodes)),preAnimationSources:[],

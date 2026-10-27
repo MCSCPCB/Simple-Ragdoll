@@ -1,5 +1,5 @@
 const publicNames=new Map([
-  ['v.active','v.ragdoll_active'],['v.model_scale','v.ragdoll_model_scale'],['v.variant','v.ragdoll_variant'],
+  ['v.active','v.ragdoll_active'],['v.variant','v.ragdoll_variant'],
 ]);
 const short=index=>{
   const first='abcdefghijklmnopqrstuvwxyz',rest=first+'0123456789';

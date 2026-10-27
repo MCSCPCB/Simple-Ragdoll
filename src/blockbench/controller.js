@@ -234,7 +234,7 @@ export class Controller {
     if(!context){Object.assign(s,{entity:'',variants:[],tree:[],props:null,link:'',outputLevels:[],outputPending:false});this.outputKey=null;this.outputRequest++;clearTimeout(this.outputTimer);this.outputWorker?.terminate();this.outputWorker=null;this.infos=null;this.draw();return;}
     const {data,config}=context;
     s.entity=data.entity;s.variant=data.variant;s.link=this.linkState(data);
-    s.variants=config.variants.map((v,i)=>({index:i,alias:v.geometry,label:variantLabel(v.geometry),geometry:data.client.geometry[v.geometry]??v.geometry,when:v.when??'',scale:v.scale??1}));
+    s.variants=config.variants.map((v,i)=>({index:i,alias:v.geometry,label:variantLabel(v.geometry),geometry:data.client.geometry[v.geometry]??v.geometry,when:v.when??''}));
     try{this.infos=rig.inspect(config,context.env);}
     catch(error){this.infos=null;s.error=errorText(error);s.missing=Object.keys(config.bodies).filter(id=>!Group.all.some(g=>g.name===config.bodies[id].bone));}
     this.validateSelection(config);
@@ -364,7 +364,6 @@ export class Controller {
     if(key.startsWith('when.')){const i=Number(key.slice(5));return config=>{config.variants[i].when=value;};}
     if(key.startsWith('collision.'))return config=>rig.setCollision(config,body,key.slice(10),value);
     switch(key){
-      case 'scale':return (config,{variant})=>rig.setScale(config,variant,Number(value));
       case 'trigger':case 'release':return config=>{config[key]=value;};
       case 'outputLevel':return config=>{if(value==='standard')delete config.outputLevel;else config.outputLevel=value;};
       case 'frequency':case 'gravity':case 'iterations':case 'contactLimit':return config=>{config.simulation={...config.simulation,[key]:['iterations','contactLimit'].includes(key)?Math.round(value):Number(value)};};
@@ -479,7 +478,7 @@ export class Controller {
     const context=this.context();if(!context)return;
     Blockbench.import({type:t('config'),extensions:['json'],readtype:'text',resource_id:'simple_ragdoll_import_config'},files=>{if(!files[0])return;this.safe(()=>{
       const config=parseJson(files[0].content,files[0].name);delete config.$schema;
-      config.variants??=[{geometry:'default',scale:1}];config.joints??={};config.collisionPairs??=[];
+      config.variants??=[{geometry:'default'}];config.joints??={};config.collisionPairs??=[];
       const shown=this.geometryId(context.data),variant=config.variants.findIndex(v=>(context.client.geometry[v.geometry]??v.geometry)===shown);
       if(variant<0)fail('geometry_reference',[shown]);
       normalizeModel(config,context.resources,context.client);
