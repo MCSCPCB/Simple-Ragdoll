@@ -4,15 +4,15 @@
     "name": "Simple Ragdoll",
     "description": "Ragdoll",
     "uuid": "57ca1d60-e3f4-4643-b975-681e271034c5",
-    "version": [0, 1, 1],
+    "version": [0, 1, 2],
     "min_engine_version": [1, 26, 0]
   },
   "modules": [
-    { "type": "data", "uuid": "cd3b6f25-e68e-46d5-bb96-96f8f57be6bf", "version": [0, 1, 1] },
-    { "type": "script", "language": "javascript", "entry": "scripts/main.js", "uuid": "96038d68-4d7a-4756-a599-d19e91cb832c", "version": [0, 1, 1] }
+    { "type": "data", "uuid": "cd3b6f25-e68e-46d5-bb96-96f8f57be6bf", "version": [0, 1, 2] },
+    { "type": "script", "language": "javascript", "entry": "scripts/main.js", "uuid": "96038d68-4d7a-4756-a599-d19e91cb832c", "version": [0, 1, 2] }
   ],
   "dependencies": [
     { "module_name": "@minecraft/server", "version": "alpha" },
-    { "uuid": "8cf9afbc-0ad2-44db-b159-f9322ab90306", "version": [0, 1, 1] }
+    { "uuid": "8cf9afbc-0ad2-44db-b159-f9322ab90306", "version": [0, 1, 2] }
   ]
 }

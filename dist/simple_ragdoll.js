@@ -1,4 +1,4 @@
-// Simple Ragdoll 0.1.1
+// Simple Ragdoll 0.1.2
 (() => {
   // lang/en.json
   var en_default = {
@@ -8738,7 +8738,7 @@
     author: "MCSCPCB",
     description: t("description"),
     icon: "accessibility_new",
-    version: "0.1.1",
+    version: "0.1.2",
     min_version: "4.12.0",
     variant: "both",
     tags: ["Minecraft: Bedrock Edition", "Animation"],
