@@ -8,6 +8,7 @@ import { createInputs } from "./input.mjs";
 import { createLiquids } from "./liquids.mjs";
 import { createResults } from "./results.mjs";
 import { worldSpace, worldRig } from './space.mjs';
+import { specializeApi } from './api-specialize.mjs';
 
 const quaternion=(out,values)=>quat.map((k,i)=>A(out+k,values[i]));
 const inverse=(out,q)=>[scale(out,q,-1),A(out+"w",q+"w")];
@@ -193,7 +194,8 @@ export function createProgram(model, {preview=false,reservedNames=[],id="generat
     [If('v.active',[interpolatedBodies(rig),compactOutput(rig,boneOutput)]),results.frame]];
   let rootOutputs=rig.bodies.map((_,i)=>boneOutput(rig,i));
   const lowered=lowerRecords({initialize:groupVariables(initialize),frame:frameBlocks.map(groupVariables),rootOutputs:rootOutputs.map(groupVariables)});
-  initialize=lowered.initialize;frameBlocks=lowered.frame;rootOutputs=lowered.rootOutputs;
+  const specialized=specializeApi({initialize:lowered.initialize,frameChunks:lowered.frame,rootOutputs:lowered.rootOutputs},rig.api);
+  initialize=specialized.initialize;frameBlocks=specialized.frameChunks;rootOutputs=specialized.rootOutputs;
   if(preview)return {initialize,frameChunks:frameBlocks,rootOutputs};
   return compilePrograms([{name:id,rig:model,initialize,frameChunks:frameBlocks,rootOutputs}],{reservedNames})[0];
 }

@@ -8,6 +8,7 @@ export const MAX_LIQUIDS = 16;
 export const PROPERTY_FIELDS = ["mass", "friction", "restitution", "linearDamping", "angularDamping"];
 export const MOTION_FIELDS = ["seq", "kind", "part", "linear", "x", "y", "z", "angular", "ax", "ay", "az", "point", "px", "py", "pz", "rotation", "qx", "qy", "qz", "qw"];
 export const FORCE_FIELDS = ["part", "x", "y", "z", "point", "px", "py", "pz", "ax", "ay", "az"];
+export const BP_API_METHODS = ["applyImpulse", "setVelocity", "setForce", "setTransform", "setProperties", "setJointsEnabled", "setTerrain", "setEnvironment"];
 
 const controllers = new Map();
 let lastSession = 0;
@@ -92,6 +93,8 @@ export class Ragdoll {
     this._simulation = { gravity: -1, gravity_vector: 0, gx: 0, gy: 0, gz: 0, time_scale: 1, iterations: 0, collisions: 1, friction: 1, joints: 1 };
     this._terrain = null;
     this._terrainBounds = null;
+    this._terrainSource = "setTerrain";
+    this._jointsSource = null;
     this._liquids = [];
     this._properties = new Map();
     this._joints = new Map();
@@ -148,7 +151,7 @@ export class Ragdoll {
 
   setJointsEnabled(enabled, joint) {
     const value = bool(enabled, "enabled");
-    if (joint === undefined) return this._change(() => { this._simulation = { ...this._simulation, joints: value }; this._joints.clear(); });
+    if (joint === undefined) return this._change(() => { this._simulation = { ...this._simulation, joints: value }; this._jointsSource = "setJointsEnabled"; this._joints.clear(); });
     const id = partKey(joint);
     this._change(() => {
       if (!this._joints.has(id) && this._joints.size >= MAX_JOINTS) throw new RangeError("Too many joint targets");
@@ -195,18 +198,18 @@ export class Ragdoll {
     if (options.selfCollisions !== undefined) next.collisions = bool(options.selfCollisions, "selfCollisions");
     if (options.friction !== undefined) next.friction = bool(options.friction, "friction");
     if (options.joints !== undefined) next.joints = bool(options.joints, "joints");
-    this._change(() => { this._simulation = next; if (options.joints !== undefined) this._joints.clear(); });
+    this._change(() => { this._simulation = next; if (options.joints !== undefined) { this._joints.clear(); this._jointsSource = null; } });
   }
 
   setTerrain(boxes, bounds) {
     if (boxes !== null && (!Array.isArray(boxes) || boxes.length > MAX_TERRAIN_BOXES)) throw new RangeError("terrain");
     const next = boxes?.map(box => { known(box, ["min", "max", "friction", "restitution"]); return terrain(box); }) ?? null;
     const coverage = terrainBounds(bounds, next);
-    this._change(() => { this._terrain = next; this._terrainBounds = coverage; });
+    this._change(() => { this._terrain = next; this._terrainBounds = coverage; this._terrainSource = "setTerrain"; });
   }
 
   setEnvironment(environment) {
-    if (environment === null) return this._change(() => { this._terrain = null; this._terrainBounds = null; this._liquids = []; });
+    if (environment === null) return this._change(() => { this._terrain = null; this._terrainBounds = null; this._liquids = []; this._terrainSource = "setEnvironment"; });
     known(environment, ["origin", "regions", "bounds"]);
     const origin = environment.origin === undefined ? { x: 0, y: 0, z: 0 } : vec(environment.origin, "origin");
     if (!Array.isArray(environment.regions)) throw new TypeError("regions");
@@ -214,7 +217,7 @@ export class Ragdoll {
     for (const region of environment.regions) (region.type === "liquid" ? liquids : solids).push(terrain(region, origin));
     if (solids.length > MAX_TERRAIN_BOXES || liquids.length > MAX_LIQUIDS) throw new RangeError("Too many regions");
     const coverage = terrainBounds(environment.bounds, solids, origin);
-    this._change(() => { this._terrain = solids; this._terrainBounds = coverage; this._liquids = liquids; });
+    this._change(() => { this._terrain = solids; this._terrainBounds = coverage; this._liquids = liquids; this._terrainSource = "setEnvironment"; });
   }
 
   dispose() {
@@ -225,6 +228,8 @@ export class Ragdoll {
       this._simulation = { gravity: -1, gravity_vector: 0, gx: 0, gy: 0, gz: 0, time_scale: 1, iterations: 0, collisions: 1, friction: 1, joints: 1 };
       this._terrain = null;
       this._terrainBounds = null;
+      this._terrainSource = null;
+      this._jointsSource = null;
       this._liquids = []; this._properties.clear(); this._joints.clear();
       this._forces.clear();
       this._motions = [];
@@ -244,10 +249,10 @@ export class Ragdoll {
 
   _change(update) {
     if (!this.isValid) throw new Error("Invalid ragdoll");
-    const before = { state: this._state, simulation: this._simulation, terrain: this._terrain, terrainBounds: this._terrainBounds, liquids: this._liquids, properties: new Map(this._properties), joints: new Map(this._joints), forces: new Map(this._forces), motions: this._motions.slice(), sequence: this._sequence };
+    const before = { state: this._state, simulation: this._simulation, terrain: this._terrain, terrainBounds: this._terrainBounds, terrainSource: this._terrainSource, jointsSource: this._jointsSource, liquids: this._liquids, properties: new Map(this._properties), joints: new Map(this._joints), forces: new Map(this._forces), motions: this._motions.slice(), sequence: this._sequence };
     try { update(); if (!this._batch) this._send(); }
     catch (error) {
-      Object.assign(this, { _state: before.state, _simulation: before.simulation, _terrain: before.terrain, _terrainBounds: before.terrainBounds, _liquids: before.liquids, _properties: before.properties, _joints: before.joints, _forces: before.forces, _motions: before.motions, _sequence: before.sequence });
+      Object.assign(this, { _state: before.state, _simulation: before.simulation, _terrain: before.terrain, _terrainBounds: before.terrainBounds, _terrainSource: before.terrainSource, _jointsSource: before.jointsSource, _liquids: before.liquids, _properties: before.properties, _joints: before.joints, _forces: before.forces, _motions: before.motions, _sequence: before.sequence });
       throw error;
     }
   }
@@ -256,29 +261,47 @@ export class Ragdoll {
     if (this._revision >= 16777214) throw new RangeError("Input revision exhausted");
     const revision = this._revision + 1, writes = [];
     const put = (key, value) => writes.push(`v.ragdoll_${key}=${number(value)};`);
+    // The server cannot read client variables. These guards run on the client;
+    // older exports without a mask support all methods, as before.
+    const guarded = (method, write) => {
+      if (!method) { write(); return; }
+      const bit = 2 ** BP_API_METHODS.indexOf(method);
+      writes.push(`(math.mod(math.floor((v.ragdoll_api_mask??255)/${bit}),2))?{`);
+      write(); writes.push('};');
+    };
     put("control_mode", modes[this._state]);
-    for (const [key, value] of Object.entries(this._simulation)) put("simulation_" + key, value);
-    put("terrain_mode", this._terrain === null ? 0 : this._terrainBounds ? 2 : 1);
-    if (this._terrainBounds) for (const side of ["min", "max"]) for (const k of axes) put(`terrain_bounds_${side}${k}`, this._terrainBounds[side][k]);
-    put("terrain_count", this._terrain?.length ?? 0);
-    this._terrain?.forEach((box, i) => {
-      for (const side of ["min", "max"]) for (const k of axes) put(`terrain_${i}_${side}${k}`, box[side][k]);
-      for (const key of ["friction", "restitution"]) put(`terrain_${i}_${key}`, box[key]);
+    for (const [key, value] of Object.entries(this._simulation)) guarded(key === "joints" ? this._jointsSource : null, () => put("simulation_" + key, value));
+    guarded(this._terrainSource, () => {
+      put("terrain_mode", this._terrain === null ? 0 : this._terrainBounds ? 2 : 1);
+      if (this._terrainBounds) for (const side of ["min", "max"]) for (const k of axes) put(`terrain_bounds_${side}${k}`, this._terrainBounds[side][k]);
+      put("terrain_count", this._terrain?.length ?? 0);
+      this._terrain?.forEach((box, i) => {
+        for (const side of ["min", "max"]) for (const k of axes) put(`terrain_${i}_${side}${k}`, box[side][k]);
+        for (const key of ["friction", "restitution"]) put(`terrain_${i}_${key}`, box[key]);
+      });
     });
-    put("liquid_count", this._liquids.length);
-    this._liquids.forEach((box, i) => {
-      for (const side of ["min", "max"]) for (const k of axes) put(`liquid_${i}_${side}${k}`, box[side][k]);
-      for (const key of ["density", "drag", "angularDrag"]) put(`liquid_${i}_${key.toLowerCase()}`, box[key]);
+    guarded("setEnvironment", () => {
+      put("liquid_count", this._liquids.length);
+      this._liquids.forEach((box, i) => {
+        for (const side of ["min", "max"]) for (const k of axes) put(`liquid_${i}_${side}${k}`, box[side][k]);
+        for (const key of ["density", "drag", "angularDrag"]) put(`liquid_${i}_${key.toLowerCase()}`, box[key]);
+      });
     });
-    put("property_count", this._properties.size);
-    [...this._properties].forEach(([id, values], i) => {
-      put(`property_${i}_part`, id);
-      for (const key of PROPERTY_FIELDS) put(`property_${i}_${key.toLowerCase()}`, values[key] ?? -1);
+    guarded("setProperties", () => {
+      put("property_count", this._properties.size);
+      [...this._properties].forEach(([id, values], i) => {
+        put(`property_${i}_part`, id);
+        for (const key of PROPERTY_FIELDS) put(`property_${i}_${key.toLowerCase()}`, values[key] ?? -1);
+      });
     });
-    put("joint_count", this._joints.size);
-    [...this._joints].forEach(([id, value], i) => { put(`joint_${i}_id`, id); put(`joint_${i}_enabled`, value); });
-    put("force_count", this._forces.size);
-    [...this._forces.values()].forEach((force, i) => { for (const key of forceFields) put(`force_${i}_${key}`, force[key]); });
+    guarded("setJointsEnabled", () => {
+      put("joint_count", this._joints.size);
+      [...this._joints].forEach(([id, value], i) => { put(`joint_${i}_id`, id); put(`joint_${i}_enabled`, value); });
+    });
+    guarded("setForce", () => {
+      put("force_count", this._forces.size);
+      [...this._forces.values()].forEach((force, i) => { for (const key of forceFields) put(`force_${i}_${key}`, force[key]); });
+    });
     put("motion_first", this._motions[0]?.seq ?? this._sequence + 1);
     put("motion_last", this._sequence);
     this._motions.forEach(command => {

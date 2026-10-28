@@ -1,6 +1,9 @@
 import { t } from '../i18n.js';
 import { TRIGGERS, RELEASES, presetOf } from './labels.js';
 import { browserDialog } from './dialogs.js';
+import { BP_API_METHODS } from '../core/api.mjs';
+
+const API_LABELS=['impulse','velocity','force','transform','properties','joints','terrain','environment'];
 
 let numericId=0;
 // Blockbench number slider: drag to scrub, click to type. Scrubbing only previews; releasing commits one undo step.
@@ -59,6 +62,14 @@ const ENTITY=`<template v-if="p.type==='entity'">
   <section class="rg-output"><h4>{{ t('output_size') }}</h4><p class="rg-note">{{ t('output_size_tip') }}</p>
     <div class="rg-output-value"><span>{{ t('output_'+(outputEntry?outputEntry.level:p.outputLevel)) }}</span><span>{{ outputEntry ? (outputEntry.bytes/1000000).toFixed(2)+' MB' : '—' }}</span></div>
     <input type="range" min="0" :max="Math.max(0,s.outputLevels.length-1)" step="1" :value="outputIndex" :disabled="s.outputPending||s.outputLevels.length<2" :aria-label="t('output_size')" @input="outputDraft=Number($event.target.value)" @change="changeOutput($event)">
+    <div class="rg-api-bar" :title="t('bp_api_tip')">
+      <label for="rg_bp_api" class="rg-grow rg-ellipsis">{{ t('bp_api') }}</label>
+      <input id="rg_bp_api" type="checkbox" class="focusable_input" :checked="apiAll" :indeterminate.prop="apiSome&&!apiAll" @change="toggleApi">
+      <i class="fa fa-question dialog_form_description" role="button" tabindex="0" :aria-label="t('bp_api_tip')" @click="apiHelp" @keydown.enter.prevent="apiHelp" @keydown.space.prevent="apiHelp"></i>
+    </div>
+    <details v-if="apiSome" class="rg-api-list"><summary><i class="fa fa-angle-right rg-fold"></i>{{ t('bp_api_select') }}</summary>
+      <ul><li v-for="entry in apiEntries" :key="entry.method"><label><input type="checkbox" class="focusable_input" :checked="p.api[entry.method]" @change="changeApi(entry.method,$event.target.checked)"><span class="rg-grow rg-ellipsis">{{ t('bp_api_'+entry.label) }}</span><code>{{ entry.method }}</code></label></li></ul>
+    </details>
   </section>
   <section><h4>{{ t('section_collision') }}</h4>
     <div class="rg-row"><span class="rg-grow">{{ t('collision_count',[p.pairs]) }}</span><button @click="run('autoCollision')" :title="t('auto_collision_tip')">{{ t('auto_collision') }}</button></div>
@@ -177,12 +188,18 @@ export function createPanels(controller){
       components:{'rg-field':Field,'rg-vector':Vector},
       data:()=>({s:controller.state,outputDraft:null}),
       computed:{p(){return this.s.props;},key(){return JSON.stringify(this.s.selected)+':'+this.s.variant;},
+        apiEntries(){return BP_API_METHODS.map((method,i)=>({method,label:API_LABELS[i]}));},
+        apiAll(){return BP_API_METHODS.every(method=>this.p?.api?.[method]);},
+        apiSome(){return BP_API_METHODS.some(method=>this.p?.api?.[method]);},
         outputIndex(){return this.outputDraft??Math.max(0,this.s.outputLevels.findIndex(entry=>entry.levels.includes(this.p?.outputLevel)));},
         outputEntry(){return this.s.outputLevels[this.outputIndex];}},
       methods:{
         t,run,
         set(key,value){controller.change(key,value);},
         changeOutput(event){const entry=this.s.outputLevels[Number(event.target.value)];this.outputDraft=null;if(entry)this.set('outputLevel',entry.level);},
+        toggleApi(){this.outputDraft=null;this.set('api',Object.fromEntries(BP_API_METHODS.map(method=>[method,!this.apiAll])));},
+        apiHelp(){Blockbench.showQuickMessage(t('bp_api_tip'),3600);},
+        changeApi(method,value){this.outputDraft=null;this.set('api',{...this.p.api,[method]:value});},
         draft(key,value){controller.draftChange(key,value);},
         restore(){controller.refresh();},
         preset(kind){return this.s.custom[kind]?'custom':presetOf(kind==='trigger'?TRIGGERS:RELEASES,this.p[kind]);},
@@ -252,6 +269,19 @@ export const styles=`
   .rg-properties .rg-row {padding:0; cursor:default; height:auto;}
   .rg-properties .rg-row:hover {background:none;}
   .rg-check-row {display:flex; align-items:center; gap:6px; margin:3px 0; cursor:pointer;}
+  .rg-api-bar {display:flex; align-items:center; gap:4px; min-height:30px; margin-top:8px;}
+  .rg-api-bar > label {cursor:pointer;}
+  .rg-api-bar .dialog_form_description {margin-left:0; padding-top:0; height:auto;}
+  .rg-output input[type=checkbox] {padding:0; margin:0; cursor:pointer;}
+  .rg-output input[type=checkbox]:indeterminate::before {content:'\\f146'; font-weight:600;}
+  .rg-api-list summary {display:flex; align-items:center; gap:4px; height:24px; margin:2px 0;}
+  .rg-api-list summary:hover {color:var(--color-light);}
+  .rg-api-list[open] .rg-fold {transform:rotate(90deg);}
+  .rg-api-list .rg-fold {width:12px; text-align:center; transition:transform .1s;}
+  .rg-api-list ul {list-style:none; margin:2px 0 0; padding:2px 0; border:1px solid var(--color-border); background:var(--color-back);}
+  .rg-api-list label {display:flex; align-items:center; gap:8px; height:26px; padding:0 8px; cursor:pointer;}
+  .rg-api-list label:hover {background:var(--color-button);}
+  .rg-api-list code {flex-shrink:0; font-family:var(--font-code); font-size:.85em; color:var(--color-subtle_text);}
   .rg-locked {pointer-events:none; opacity:.55;}
   .rg-properties details summary {cursor:pointer; color:var(--color-subtle_text); margin:6px 0 2px;}
   .rg-grow {flex:1; min-width:0;}

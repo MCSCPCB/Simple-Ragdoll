@@ -743,5 +743,15 @@
     {
       "geometry": "default"
     }
-  ]
+  ],
+  "api": {
+    "applyImpulse": true,
+    "setVelocity": false,
+    "setForce": false,
+    "setTransform": false,
+    "setProperties": false,
+    "setJointsEnabled": false,
+    "setTerrain": false,
+    "setEnvironment": true
+  }
 }

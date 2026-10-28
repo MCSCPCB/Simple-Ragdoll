@@ -2,6 +2,7 @@ import { t, fail, errorText, RagdollError } from '../i18n.js';
 import { importPack, parseJson, descriptionOf, relatedAnimations } from '../resources.js';
 import { clone, entityRows, autoConfig, selectModels } from '../config.js';
 import { normalizeModel } from '../core/model.mjs';
+import { apiSettings } from '../core/api.mjs';
 import { modelRotation, sub } from '../core/math.mjs';
 import { estimateOutputLevels, resourceVariables } from '../export.js';
 import * as rig from '../rig.js';
@@ -302,7 +303,7 @@ export class Controller {
   buildProps(config,infos){
     const s=this.state,sel=s.selected,v=s.variant,info=infos?.[v];
     if(sel.type==='entity')return {type:'entity',trigger:config.trigger??TRIGGERS.hurt,release:config.release??RELEASES.healed,
-      outputLevel:config.outputLevel??'standard',
+      outputLevel:config.outputLevel??'standard',api:apiSettings(config.api),
       simulation:{frequency:20,iterations:6,contactLimit:128,gravity:9.82,...config.simulation},pairs:(config.collisionPairs??[]).length,
       bodies:Object.keys(config.bodies).length,joints:Object.keys(config.joints).length};
     if(sel.type==='bone')return {type:'bone',bone:sel.bone,owner:info?rig.nearestBody(config,info.bones,sel.bone):null};
@@ -366,6 +367,7 @@ export class Controller {
     switch(key){
       case 'trigger':case 'release':return config=>{config[key]=value;};
       case 'outputLevel':return config=>{if(value==='standard')delete config.outputLevel;else config.outputLevel=value;};
+      case 'api':return config=>{const settings=apiSettings(value);if(Object.values(settings).every(Boolean))delete config.api;else config.api=settings;};
       case 'frequency':case 'gravity':case 'iterations':case 'contactLimit':return config=>{config.simulation={...config.simulation,[key]:['iterations','contactLimit'].includes(key)?Math.round(value):Number(value)};};
       case 'massMode':return (config,{infos,variant})=>rig.setMassMode(config,infos,variant,body,value);
       case 'mass':return (config,{variant})=>rig.setBody(config,variant,body,'mass',Number(value));

@@ -3,7 +3,8 @@ import {parseExpression} from './parse.mjs';
 const precedence={'??':1,'||':2,'&&':3,'==':4,'!=':4,'<':5,'>':5,'<=':5,'>=':5,'+':6,'-':6,'*':7,'/':7,'%':7};
 const rank=n=>n.kind==='if'?0:n.kind==='binary'?precedence[n.op]:n.kind==='unary'?8:9;
 
-function print(n,min=-1){
+export function printExpression(n,min=-1){
+  const print=printExpression;
   let text;
   if(n.kind==='value')text=typeof n.value==='string'?"'"+n.value+"'":String(n.value);
   else if(n.kind==='read')text=n.path.join('.');
@@ -23,7 +24,7 @@ export function expressionCompactor(){
   return source=>{
     if(typeof source!=='string')return String(Number(source));
     if(cache.has(source))return cache.get(source);
-    const result=print(parseExpression(source));
+    const result=printExpression(parseExpression(source));
     if(cache.size>=16384)cache.clear();
     cache.set(source,result);return result;
   };

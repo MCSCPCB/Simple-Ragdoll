@@ -31,7 +31,7 @@ export function sharingKey(rig){
   return JSON.stringify([
     rig.bodies.map(b=>[b.parent,b.shapes.length]),rig.shapes.map(s=>s.body),
     rig.joints.map(j=>[j.a,j.b]),rig.jointOrder,rig.shapePairs,
-    rig.simulation,rig.contactFriction??true,[...rig.outputs].sort(),
+    rig.simulation,rig.contactFriction??true,[...rig.outputs].sort(),rig.api,
   ]);
 }
 

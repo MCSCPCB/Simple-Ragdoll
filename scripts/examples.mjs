@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import { importPack, parseJson } from '../src/resources.js';
 import { generatePack } from '../src/export.js';
 import { entityRows } from '../src/config.js';
+import { BP_API_METHODS } from '../src/core/api.mjs';
 
 async function copyFiles(zip, directory, prefix = '') {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
@@ -18,11 +19,14 @@ const config = parseJson(await readFile('src/presets/villager.json', 'utf8'), 's
 delete config.$schema;
 config.trigger = 'q.max_health>0&&q.health<=1';
 config.release = '0';
+// main.js submits solids and liquids together through setEnvironment.
+config.api = Object.fromEntries(BP_API_METHODS.map(method => [method, ['applyImpulse', 'setEnvironment'].includes(method)]));
 await writeFile('examples/villager.physics.json', JSON.stringify(config, null, 2) + '\n');
 const rows = entityRows(resources);
 for (const row of rows.filter(row => row.selected)) {
   row.config.trigger = config.trigger;
   row.config.release = config.release;
+  row.config.api = { ...config.api };
 }
 if (!rows.find(row => row.id === 'minecraft:villager_v2')?.selected) throw new Error('Villager preset did not match.');
 const bpManifest = parseJson(await readFile('simple_ragdoll/BP/manifest.json', 'utf8'), 'simple_ragdoll/BP/manifest.json');

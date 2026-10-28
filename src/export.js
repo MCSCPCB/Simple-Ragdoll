@@ -6,6 +6,7 @@ import { INPUT_ANIMATION } from './core/input.mjs';
 import { parseJson } from './resources.js';
 import { clone } from './config.js';
 import { fail } from './i18n.js';
+import { apiSettings, apiMask } from './core/api.mjs';
 
 export function adaptClient(original,rig,program,id){
   const result=clone(original),c=result['minecraft:client_entity'].description,s=c.scripts??={};
@@ -14,8 +15,9 @@ export function adaptClient(original,rig,program,id){
     const alias=`ragdoll_original_${i}_${name}`;animations[alias]=value;animate.push(alias);
   }
   const key='ragdoll_generated';if(key in animations)fail('alias',[key]);
-  if('ragdoll_input' in animations)fail('alias',['ragdoll_input']);
-  animations[key]=id;animations.ragdoll_input=INPUT_ANIMATION;delete c.animation_controllers;c.animations=animations;
+  const hasApi=apiMask(apiSettings(rig.api))>0;
+  if(hasApi&&'ragdoll_input' in animations)fail('alias',['ragdoll_input']);
+  animations[key]=id;if(hasApi)animations.ragdoll_input=INPUT_ANIMATION;delete c.animation_controllers;c.animations=animations;
   const atLeast=(version,min)=>version.split('.').map(Number).reduce((a,n,i)=>a||Math.sign(n-(min[i]??0)),0)<0?min.join('.'):version;
   result.format_version=atLeast(String(result.format_version??'1.10.0'),[1,20,60]);c.min_engine_version=atLeast(String(c.min_engine_version??'1.10.0'),[1,26,0]);
   const alias=g=>Object.entries(c.geometry).find(([,value])=>value===g)?.[0];
@@ -50,6 +52,7 @@ function* generateGroups(resources,entities){
     const client=original['minecraft:client_entity'].description,rig=outputModel(config,resources,client);
     return {index,original,rig,name:client.identifier.replaceAll(':','_')};
   });
+  const inputEntries=entries.filter(e=>apiMask(e.rig.api)),inputIndex=new Map(inputEntries.map((e,i)=>[e.index,i]));
   const finish=(entry,program)=>{
     const {original,rig,name}=entry,animationId=`animation.ragdoll.${name}`;
     const definition=JSON.stringify(adaptClient(original,rig,program,animationId));
@@ -125,11 +128,11 @@ function* generateGroups(resources,entities){
       combined.push(...share(group));
     }
     if(total(combined)<total(results))results=combined;
-    const inputBytes=byteLength(inputFile);
+    const inputBytes=inputEntries.length?byteLength(inputFile):0;
     for(const records of results){
       const bytes=byteLength(animationFile(records[0].program.computeAnimations));
       records.forEach((record,i)=>{record.bytes+=Math.floor(bytes/records.length)+(i<bytes%records.length?1:0)
-        +Math.floor(inputBytes/entities.length)+(record.index<inputBytes%entities.length?1:0);});
+        +(inputIndex.has(record.index)?Math.floor(inputBytes/inputEntries.length)+(inputIndex.get(record.index)<inputBytes%inputEntries.length?1:0):0);});
       yield {records};
     }
   }
@@ -163,7 +166,7 @@ export async function generatePack(resources,rows,options,Zip,onProgress=()=>{})
   const selected=rows.filter(r=>r.selected);if(!selected.length)fail('selection');
   const zip=new Zip(),reports=[],updates=new Map();
   const set=(path,value)=>updates.set(path,JSON.stringify(value));
-  updates.set('animations/simple_ragdoll_input.animation.json',inputFile);
+  if(selected.some(row=>apiMask(apiSettings(row.config?.api))))updates.set('animations/simple_ragdoll_input.animation.json',inputFile);
   const entities=[];
   for(const row of selected){
     if(!row.config)fail('not_configured',[row.id]);

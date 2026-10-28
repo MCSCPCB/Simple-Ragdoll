@@ -1,5 +1,6 @@
 import { choose } from "./expression.mjs";
 import { clientSize } from './space.mjs';
+import { apiSettings } from './api.mjs';
 import { add, sub, scale, dot, rotate, modelRotation, reflect, reflectRotation, identity, compose, boneTransform } from "./math.mjs";
 
 import { fail } from "../i18n.js";
@@ -32,7 +33,8 @@ export function settings(input={}) {
 }
 
 export function normalizeModel(config,resources,client) {
-  keys(config,["$schema","formatVersion","trigger","release","defaults","simulation","bodies","joints","collisionPairs","jointOrder","variants","outputLevel","outputs"],"physics");
+  keys(config,["$schema","formatVersion","trigger","release","defaults","simulation","bodies","joints","collisionPairs","jointOrder","variants","outputLevel","outputs","api"],"physics");
+  const api=apiSettings(config.api);
   if(config.outputs!==undefined&&(!Array.isArray(config.outputs)||config.outputs.some(key=>!['state','bodies','contacts','liquids'].includes(key))))fail('unexpected',[config.outputs]);
   if(config.formatVersion!==1)fail("format");
   if(!OUTPUT_LEVELS.includes(config.outputLevel??'standard'))fail('unexpected',[config.outputLevel]);
@@ -124,6 +126,6 @@ export function normalizeModel(config,resources,client) {
   const shapePairs=collisionPairs.flatMap(([a,b])=>shapes.flatMap((s,i)=>s.body===a?shapes.flatMap((t,j)=>t.body===b?[[i,j]]:[]):[]));
   const jointOrder=(config.jointOrder??joints.map(j=>j.id)).map(id=>joints.findIndex(j=>j.id===id));
   if(jointOrder.some(i=>i<0)||new Set(jointOrder).size!==joints.length||jointOrder.length!==joints.length)fail("joint_order");
-  return {bodies,joints,shapes,shapePairs,jointOrder,variants:normalized,clientSize:clientSize(client),simulation:sim,outputs:config.outputs??[],
+  return {bodies,joints,shapes,shapePairs,jointOrder,variants:normalized,clientSize:clientSize(client),simulation:sim,outputs:config.outputs??[],api,
     trigger:expression(config.trigger??"q.max_health>0&&q.health<q.max_health","trigger"),release:expression(config.release??"q.health>=q.max_health","release")};
 }

@@ -1,4 +1,5 @@
 import { A, If, Loop, axes, quat, vector, copy, scale, add, sub, cross, rotate, multiply, choose, dispatch } from './expression.mjs';
+import { apiSettings } from './api.mjs';
 
 export const materialName = (i, key) => `v.material_${i}_${key.toLowerCase()}`;
 export const materialValue = (rig, i, key) => `(v.has_material?${materialName(i,key)}:(${rig.bodies[i][key]}))`;
@@ -8,6 +9,7 @@ const states = [...axes,...axes.map(k=>'v'+k),...axes.map(k=>'w'+k),...quat.map(
 const tensorKeys = ['xx','yy','zz','xy','xz','yz'];
 
 export function controls(rig, ids) {
+  const api=apiSettings(rig.api);
   const bodies=rig.bodies, indices=bodies.map((_,i)=>i);
   const pick=(values,index='t.input_body_index')=>choose(index,values);
   const load=(out,index='t.input_body_index')=>states.map(k=>A(out+k,pick(indices.map(i=>'v.b'+i+k),index)));
@@ -81,17 +83,21 @@ export function controls(rig, ids) {
     return [
       If('!t.input_part',[
         aggregate(),
-        ...(!force?[If('t.input_kind==3&&t.input_rotation',[
+        ...(!force&&api.setTransform?[If('t.input_kind==3&&t.input_rotation',[
           ...axes.map(k=>A('t.transform_inverse'+k,`-v.b${root}q${k}`)),A('t.transform_inversew',`v.b${root}qw`),multiply('t.transform_q','t.input_q','t.transform_inverse')])]:[]),
-        If(force?'t.input_force_index>=0':'t.input_kind==2',[
+        ...(force||api.applyImpulse?[If(force?'t.input_force_index>=0':'t.input_kind==2',[
           copy('t.action_torque','t.input_a'),If('t.input_point',[
             ...axes.map(k=>A('t.action_r'+k,`t.input_p${k}-v.o${k}-t.center${k}`)),cross('t.action_offset','t.action_r','t.input_'),add('t.action_torque','t.action_torque','t.action_offset')]),
           matrix('t.action_spin','t.total_inverse','t.action_torque'),scale('t.action_spin','t.action_spin',factor),
-        ]),
+        ])]:[]),
       ]),
       A('t.input_body_index',0),Loop(bodies.length,[If(`t.input_part==0||t.input_part==(${pick(ids)})`,[
-        load('t.body_'),force?impulse:If('t.input_kind==1',velocity,If('t.input_kind==3',transform,impulse)),save('t.body_'),
-        ...(!force?[If('t.input_kind==3',dispatch('t.input_body_index',indices,i=>[...axes,...quat.map(k=>'q'+k)].flatMap(k=>[A(`v.b${i}prev${k}`,'t.body_'+k),A(`v.b${i}old${k}`,'t.body_'+k)])))]:[]),
+        load('t.body_'),force?impulse:[
+          ...(api.setVelocity?[If('t.input_kind==1',velocity)]:[]),
+          ...(api.setTransform?[If('t.input_kind==3',transform)]:[]),
+          ...(api.applyImpulse?[If('t.input_kind==2',impulse)]:[]),
+        ],save('t.body_'),
+        ...(!force&&api.setTransform?[If('t.input_kind==3',dispatch('t.input_body_index',indices,i=>[...axes,...quat.map(k=>'q'+k)].flatMap(k=>[A(`v.b${i}prev${k}`,'t.body_'+k),A(`v.b${i}old${k}`,'t.body_'+k)])))]:[]),
       ]),A('t.input_body_index','t.input_body_index+1')]),
     ];
   }
