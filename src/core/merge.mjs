@@ -20,7 +20,7 @@ export function mergeGroups(groups,index,parameter){
  if(!groups.length)return [];
  groups=groups.map(g=>[g].flat(Infinity));
  if(same(groups))return groups[0];
- if(groups.some(g=>g.length!==groups[0].length))return dispatch(index,groups,g=>g);
+ if(groups.some(g=>g.length!==groups[0].length))return alignedMerge(groups,index,parameter);
  const merge=values=>same(values)?values[0]:mergeExpr(values.map(parseExpression),index,parameter);
  return groups[0].map((first,i)=>{
   const nodes=groups.map(g=>g[i]);if(same(nodes))return first;
@@ -30,6 +30,34 @@ export function mergeGroups(groups,index,parameter){
   }
   if(first.kind==='if')return If(merge(nodes.map(n=>n.test)),mergeGroups(nodes.map(n=>n.yes),index,parameter),mergeGroups(nodes.map(n=>n.no),index,parameter));
   return Loop(merge(nodes.map(n=>n.count)),mergeGroups(nodes.map(n=>n.body),index,parameter));
+ });
+}
+
+// Align ordered statements instead of duplicating an entire block when one
+// profile has extra work. Missing statements are guarded by the profile index.
+function alignedMerge(groups,index,parameter){
+ const key=n=>n.kind==='set'?'set:'+n.name:n.kind;
+ let columns=groups[0].map(n=>[n]),budget=16000000;
+ for(let g=1;g<groups.length;g++){
+  const a=columns,b=groups[g],m=a.length,n=b.length,w=n+1,cells=(m+1)*w;
+  // Unusually large authored models must not make export allocate an
+  // unbounded alignment matrix. Whole-block dispatch is always valid.
+  if(cells>4000000||(budget-=cells)<0)return dispatch(index,groups,g=>g);
+  const left=a.map(c=>key(c.find(Boolean))),right=b.map(key),dp=new Uint32Array(cells);
+  for(let i=m-1;i>=0;i--)for(let j=n-1;j>=0;j--)
+   dp[i*w+j]=left[i]===right[j]?1+dp[(i+1)*w+j+1]:Math.max(dp[(i+1)*w+j],dp[i*w+j+1]);
+  const next=[];let i=0,j=0;
+  while(i<m||j<n){
+   if(i<m&&j<n&&left[i]===right[j])next.push([...a[i++],b[j++]]);
+   else if(i<m&&(j>=n||dp[(i+1)*w+j]>=dp[i*w+j+1]))next.push([...a[i++],null]);
+   else next.push([...Array(g).fill(null),b[j++]]);
+  }
+  columns=next;
+ }
+ return columns.flatMap(column=>{
+  const present=column.flatMap((n,i)=>n?[i]:[]),fallback=column.find(Boolean);
+  const merged=mergeGroups(column.map(n=>[n??fallback]),index,parameter);
+  return present.length===column.length?merged:If(present.map(i=>index+'=='+i).join('||'),merged);
  });
 }
 

@@ -2,6 +2,7 @@ import {A,If,axes,emit} from './expression.mjs';
 import {mergeGroups,parameterMerger} from './merge.mjs';
 import {minifier} from './minify.mjs';
 import {splitStatements} from './chunks.mjs';
+import {expressionCompactor} from './syntax.mjs';
 
 const profile='v.compute_profile',slot='v.compute_step';
 const flatten=nodes=>[nodes].flat(Infinity);
@@ -34,6 +35,14 @@ export function sharingKey(rig){
   ]);
 }
 
+// Loop bounds and physical constants become per-entity parameters. Entities
+// with different body counts can still use the same ordered step operations.
+export function structureKey(entry){
+  const skeleton=nodes=>flatten(nodes).map(n=>n.kind==='set'?['set',n.name]
+    :n.kind==='if'?['if',skeleton(n.yes),skeleton(n.no)]:['loop',skeleton(n.body)]);
+  return JSON.stringify(skeleton(entry.frameChunks[1]));
+}
+
 // Specialized schedules remain useful when a shared kernel would be larger.
 export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
   entries=prepareOutputs(entries);
@@ -44,7 +53,8 @@ export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
   const frequencyText=emit(all),written=assigned(all);
   const external=[...frequencyText.matchAll(/(?<![\w.])v\.\w+/g)].map(m=>m[0]).filter(n=>!written.has(n));
   const namespace=minifier({frequencyText,reservedNames,externalNames:external});
-  const source=(nodes,target='molang')=>target==='molang'?namespace(emit(nodes)):emit(nodes,target);
+  const compact=expressionCompactor();
+  const source=(nodes,target='molang')=>target==='molang'?namespace(emit(nodes,target,{expression:compact})):emit(nodes,target);
   const split=(nodes,prefix)=>splitStatements(nodes,source,{limit:63900,target:61500,prefix});
   const computeAnimations={};
   const prefix=`animation.ragdoll.${entries[0].name}.compute`;
@@ -90,7 +100,7 @@ export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
         return value;
-      })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
+      })])),scale:axes.map(()=>target==='molang'?namespace(compact(boneSize(body,i))):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks,rootOutputs,source,animation,names:namespace.roots,
       initializeSources:initializeChunks.map(nodes=>source(nodes)),preAnimationSources:before.map(nodes=>source(nodes)),
@@ -120,7 +130,8 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
   const frequencyText=emit(all),written=assigned(all);
   const external=[...frequencyText.matchAll(/(?<![\w.])v\.\w+/g)].map(m=>m[0]).filter(n=>!written.has(n));
   const namespace=minifier({frequencyText,reservedNames,externalNames:external});
-  const source=(nodes,target='molang')=>target==='molang'?namespace(emit(nodes)):emit(nodes,target);
+  const compact=expressionCompactor();
+  const source=(nodes,target='molang')=>target==='molang'?namespace(emit(nodes,target,{expression:compact})):emit(nodes,target);
   const split=(nodes,name)=>splitStatements(nodes,source,{limit:63900,target:61500,prefix:'compute_'+name});
   const computeAnimations={},prefix=`animation.ragdoll.${entries[0].name}.compute`;
   const carrier=(nodes,name)=>{
@@ -143,7 +154,7 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
         return value;
-      })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
+      })])),scale:axes.map(()=>target==='molang'?namespace(compact(boneSize(body,i))):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks:execution.map(c=>c.nodes),rootOutputs,source,animation,names:namespace.roots,
       initializeSources:initializeChunks.map(nodes=>source(nodes)),preAnimationSources:[],

@@ -14,18 +14,18 @@ export function normalize(prefix, keys = axes) {
   return [A("t.norm", `math.max(math.sqrt(${dot(prefix, prefix, keys)}),0.000001)`), scale(prefix, prefix, "1/t.norm", keys)];
 }
 
-function emitNodes(nodes, target = "molang", depth = 0) {
+function emitNodes(nodes, target, expression, depth = 0) {
   return nodes.flat(Infinity).map(n => {
-    if (n.kind === "set") return `${n.name}=${n.value};`;
+    if (n.kind === "set") return `${n.name}=${expression(n.value)};`;
     if (n.kind === "if") return target === "molang"
-      ? `(${n.test})?{${emitNodes(n.yes, target, depth)}}${n.no.length ? `:{${emitNodes(n.no, target, depth)}}` : ""};`
-      : `if(${n.test}){${emitNodes(n.yes, target, depth)}}${n.no.length ? `else{${emitNodes(n.no, target, depth)}}` : ""}`;
-    return target === "molang" ? `loop(${n.count},{${emitNodes(n.body, target, depth + 1)}});`
-      : `for(let i${depth}=0,n${depth}=${n.count};i${depth}<n${depth};i${depth}++){${emitNodes(n.body, target, depth + 1)}}`;
+      ? `(${expression(n.test)})?{${emitNodes(n.yes, target, expression, depth)}}${n.no.length ? `:{${emitNodes(n.no, target, expression, depth)}}` : ""};`
+      : `if(${n.test}){${emitNodes(n.yes, target, expression, depth)}}${n.no.length ? `else{${emitNodes(n.no, target, expression, depth)}}` : ""}`;
+    return target === "molang" ? `loop(${expression(n.count)},{${emitNodes(n.body, target, expression, depth + 1)}});`
+      : `for(let i${depth}=0,n${depth}=${n.count};i${depth}<n${depth};i${depth}++){${emitNodes(n.body, target, expression, depth + 1)}}`;
   }).join("");
 }
-export function emit(nodes, target = "molang") {
-  const source = emitNodes(nodes, target), names = new Map();
+export function emit(nodes, target = "molang", {expression = value => value} = {}) {
+  const source = emitNodes(nodes, target, expression), names = new Map();
   const identifier = index => (index >= 26 ? identifier(Math.floor(index / 26) - 1) : "") + String.fromCharCode(97 + index % 26);
   return source.replace(/'[^']*'|(?<![\w.])t\.\w+/g, name => {
     if (name.startsWith("'")) return name;

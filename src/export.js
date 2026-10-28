@@ -1,7 +1,7 @@
 import { OUTPUT_LEVELS } from './core/model.mjs';
 import { outputModel } from './core/output.mjs';
 import { createProgram } from './core/program.mjs';
-import { compilePrograms, compileSpecializedPrograms, sharingKey } from './core/compute.mjs';
+import { compilePrograms, compileSpecializedPrograms, sharingKey, structureKey } from './core/compute.mjs';
 import { INPUT_ANIMATION } from './core/input.mjs';
 import { parseJson } from './resources.js';
 import { clone } from './config.js';
@@ -59,47 +59,79 @@ function* generateGroups(resources,entities){
   const compile=(entries,compiler=compilePrograms)=>compiler(entries,{reservedNames}).map((program,i)=>finish(entries[i],program));
   const size=records=>records.reduce((n,r)=>n+r.bytes,0)+byteLength(animationFile(records[0].program.computeAnimations));
   const total=groups=>groups.reduce((n,records)=>n+size(records),0);
-  const groups=new Map();
-  for(const entry of entries){const key=entry.rig.bodies.length;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
-  let completed=0;
-  const inputBytes=byteLength(inputFile);
-  for(const group of groups.values()){
-    const compiled=[],independent=new Map(),specialized=new Map();
-    for(const [i,entry] of group.entries()){
-      yield {progress:[entry.original['minecraft:client_entity'].description.identifier,completed+i,entities.length,'generating']};
+  // Release rejected programs between batches. Retaining every candidate for
+  // a large addon costs far more memory than the final resource files.
+  const ordered=[...entries].sort((a,b)=>a.rig.bodies.length-b.rig.bodies.length);
+  for(let start=0;start<ordered.length;start+=32)yield* generateBatch(ordered.slice(start,start+32),start);
+
+  function* generateBatch(entries,start){
+    const prepared=[],independent=new Map(),sharedCache=new Map();
+    for(const [i,entry]of entries.entries()){
+      yield {progress:[entry.original['minecraft:client_entity'].description.identifier,start+i,entities.length,'generating']};
       const ready={...entry,...createProgram(entry.rig,{preview:true,reservedNames})};
-      compiled.push(ready);independent.set(ready,compile([ready],compileSpecializedPrograms));
-      const key=sharingKey(ready.rig);if(!specialized.has(key))specialized.set(key,[]);specialized.get(key).push(ready);
+      prepared.push(ready);independent.set(ready,compile([ready],compileSpecializedPrograms));
     }
-    yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,completed,entities.length,'sharing']};
-    // Keep the previous specialized strategy as a size baseline. Sharing is an
-    // automatic export optimization, not a change to the user's physics model.
-    let results=[...specialized.values()].flatMap(entries=>{
-      const separate=entries.map(e=>independent.get(e));
-      if(entries.length===1)return separate;
-      try{const shared=compile(entries,compileSpecializedPrograms);return size(shared)<total(separate)?[shared]:separate;}
-      catch(error){if(error.key!=='chunk')throw error;return separate;}
-    });
+    const groupBy=(entries,key,limit=200)=>{
+      const groups=new Map();
+      for(const entry of entries){const k=key(entry);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(entry);}
+      // Bound profile selectors and merge work even for very large resource packs.
+      return [...groups.values()].flatMap(group=>Array.from({length:Math.ceil(group.length/limit)},(_,i)=>group.slice(i*limit,(i+1)*limit)));
+    };
     const share=entries=>{
-      try{return [compile(entries)];}
+      const key=entries.map(e=>e.index).join(',');
+      if(sharedCache.has(key))return sharedCache.get(key);
+      let result;
+      try{result=[compile(entries)];}
       catch(error){
         if(error.key!=='chunk')throw error;
         if(entries.length===1)return [independent.get(entries[0])];
         // An oversized variable loop cannot be split inside Molang. Smaller
         // profile groups regain constant loops and stay below the expression cap.
         const middle=Math.ceil(entries.length/2);
-        return [...share(entries.slice(0,middle)),...share(entries.slice(middle))];
+        result=[...share(entries.slice(0,middle)),...share(entries.slice(middle))];
       }
+      sharedCache.set(key,result);return result;
     };
-    const shared=share(compiled);
-    if(total(shared)<total(results))results=shared;
+    let results=[];
+    for(const group of groupBy(prepared,e=>e.rig.bodies.length)){
+      yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,group[0].index,entities.length,'sharing']};
+      // Keep the previous specialized strategy as a size baseline. Sharing is an
+      // automatic export optimization, not a change to the user's physics model.
+      let baseline=groupBy(group,e=>sharingKey(e.rig)).flatMap(entries=>{
+        const separate=entries.map(e=>independent.get(e));
+        if(entries.length===1)return separate;
+        try{const shared=compile(entries,compileSpecializedPrograms);return size(shared)<total(separate)?[shared]:separate;}
+        catch(error){if(error.key!=='chunk')throw error;return separate;}
+      });
+      const shared=share(group);
+      if(total(shared)<total(baseline))baseline=shared;
+      results.push(...baseline);
+    }
+    const structural=[];
+    for(const group of groupBy(prepared,structureKey)){
+      yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,group[0].index,entities.length,'sharing']};
+      const separate=group.map(e=>independent.get(e)),shared=share(group);
+      structural.push(...(total(shared)<total(separate)?shared:separate));
+    }
+    // Compare actual emitted bytes, including each entity's parameter bindings.
+    // A structure-based kernel is useful only when the complete pack is smaller.
+    if(total(structural)<total(results))results=structural;
+    // BP inputs contain per-body operations, so their exact statement skeletons
+    // can differ even when the solver is compatible. Alignment also lets these
+    // profiles share; retain it only when its guarded operations cost fewer bytes.
+    const combined=[];
+    for(const group of groupBy(prepared,()=>0,16)){
+      yield {progress:[group[0].original['minecraft:client_entity'].description.identifier,group[0].index,entities.length,'sharing']};
+      combined.push(...share(group));
+    }
+    if(total(combined)<total(results))results=combined;
+    const inputBytes=byteLength(inputFile);
     for(const records of results){
       const bytes=byteLength(animationFile(records[0].program.computeAnimations));
       records.forEach((record,i)=>{record.bytes+=Math.floor(bytes/records.length)+(i<bytes%records.length?1:0)
         +Math.floor(inputBytes/entities.length)+(record.index<inputBytes%entities.length?1:0);});
       yield {records};
     }
-    completed+=group.length;
   }
 }
 
