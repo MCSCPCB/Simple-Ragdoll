@@ -1,5 +1,5 @@
 import { TransformControls } from '../vendor/transform-controls.js';
-import { add, sub } from '../core/math.mjs';
+import { add, sub, rotate } from '../core/math.mjs';
 
 const mirror=p=>[-p[0],p[1],p[2]];
 
@@ -78,9 +78,35 @@ export class Gizmo {
       return {position:step?position.map((n,i)=>target.position[i]+Math.round((n-target.position[i])/step)*step):position};
     }
     if(mode==='rotate')return {quaternion:[node.quaternion.x,-node.quaternion.y,-node.quaternion.z,node.quaternion.w]};
+    if(this.drag?.resize){
+      const {inverse,sides}=this.drag.resize;
+      const delta=this.controls.pointEnd.clone().sub(this.controls.pointStart).applyMatrix3(inverse).toArray();
+      // Resize by the pointer's distance in box-local units. Moving the center
+      // by half the snapped size change keeps the opposite face fixed.
+      const size=target.size.map((n,i)=>{
+        const change=delta[i]*sides[i];
+        return Math.max(.01,n+(this.step?Math.round(change/this.step)*this.step:change));
+      });
+      const offset=size.map((n,i)=>sides[i]*(n-target.size[i])/2);
+      // The vendor scale ratio is only used for uniform scaling. In a face
+      // drag it must not flip/singularize the handle when crossing the center.
+      node.scale.set(1,1,1);
+      return {size,position:add(target.position,rotate(target.quaternion,mirror(offset)))};
+    }
     return {size:target.size.map((n,i)=>{const raw=n*Math.abs(node.scale.getComponent(i));return Math.max(.01,this.step?n+Math.round((raw-n)/this.step)*this.step:raw);})};
   }
-  begin(){this.drag={orbit:this.preview.controls.enabled,edit:null};this.preview.controls.enabled=false;}
+  begin(){
+    this.drag={orbit:this.preview.controls.enabled,edit:null};this.preview.controls.enabled=false;
+    const controls=this.controls;
+    if(controls.mode==='scale'&&!controls.axis.includes('XYZ')){
+      // The visible handles flip with the camera. Capture the grabbed side
+      // once, before any movement, including rotated/scaled parent bones.
+      const inverse=new THREE.Matrix3().setFromMatrix4(this.node.matrixWorld).invert();
+      const start=controls.pointStart.clone().applyMatrix3(inverse).toArray();
+      const sides=['X','Y','Z'].map((axis,i)=>controls.axis.includes(axis)?Math.sign(start[i])||1:0);
+      this.drag.resize={inverse,sides};controls.pointEnd.copy(controls.pointStart);
+    }
+  }
   change(){if(!this.drag)return;const edit=this.controller.gizmoEdit(this.value());if(edit){this.drag.edit=edit;this.controller.draft(edit);}}
   finish(){
     if(!this.drag)return;

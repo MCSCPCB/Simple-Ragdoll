@@ -353,7 +353,7 @@ export class Controller {
   // Turns a gizmo value (bone-local position, quaternion or size) into an edit.
   gizmoEdit(value){
     const sel=this.state.selected;
-    if(sel.type==='shape')return (config,{infos,variant})=>rig.setShape(config,infos,variant,sel.body,sel.index,value.size?{size:value.size}:value.quaternion?{rotation:rig.quaternionEuler(value.quaternion)}:{position:value.position});
+    if(sel.type==='shape')return (config,{infos,variant})=>rig.setShape(config,infos,variant,sel.body,sel.index,value.quaternion?{rotation:rig.quaternionEuler(value.quaternion)}:value);
     if(sel.type==='body')return (config,{variant})=>rig.setBody(config,variant,sel.body,'center',rig.fine(value.position));
     if(sel.type==='joint')return (config,{infos,variant})=>value.quaternion?rig.setJointRotation(config,infos,variant,sel.joint,value.quaternion):rig.setJointPosition(config,infos,variant,sel.joint,value.position);
     return null;
