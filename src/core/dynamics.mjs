@@ -306,8 +306,13 @@ function contactSolve() {
       loadBody('t.da',prefix+'ia'),loadBody('t.db',prefix+'ib'),
       A('t.relax',12/13),A('t.eps',4/(dt*dt*1e7*13)),A('t.stiff',friction+'?0:'+4/(dt*13)),
       If(friction,[
-        A('t.bounce',0),copy('t.normal',prefix+'n'),vector('t.unit',['math.abs(t.normalx)<0.9?1:0','math.abs(t.normalx)<0.9?0:1',0]),
-        cross('t.tangent0','t.normal','t.unit'),cross('t.tangent1','t.normal','t.tangent0'),
+        // The reference axis is either X or Y. Preserve signed zero while
+        // removing the normal copy and construction of three unit components.
+        A('t.bounce',0),If('math.abs(t.cnx)<0.9',[
+          A('t.tangent0x','t.cny*0-t.cnz*0'),A('t.tangent0y','t.cnz-t.cnx*0'),A('t.tangent0z','t.cnx*0-t.cny'),
+        ],[
+          A('t.tangent0x','t.cny*0-t.cnz'),A('t.tangent0y','t.cnz*0-t.cnx*0'),A('t.tangent0z','t.cnx-t.cny*0'),
+        ]),cross('t.tangent1',prefix+'n','t.tangent0'),
         A('t.upper','('+material('friction')+')*'+gravityValue()+'/(t.daim+t.dbim)'),A('t.lower','-t.upper'),
       ],[A('t.lower',0),A('t.upper',1e6)]),
       A('t.tangent_id',friction+'?0:2'),Loop(friction+'?2:1',[
@@ -357,6 +362,17 @@ function hingeSolve(ids,pick){
     ]),
   ];
 }
+function jointGeometry(nodes,fields,prefix,selector='t.joint_id',count=JOINTS.length){
+  if(ITERATIONS===1)return nodes;
+  const slots=Array.from({length:count},(_,i)=>i);
+  const name=(i,field)=>`v.joint_cache_${prefix}_${i}_${field.slice(2)}`;
+  // Body poses only change after all iterations. Refill on iteration zero of
+  // each physical step; velocities, accumulated impulses and hinge tracking
+  // remain in the solver. Separate scalars avoid widening joint state records.
+  return If('v.input_iteration==0',[
+    nodes,dispatch(selector,slots,i=>fields.map(field=>A(name(i,field),field))),
+  ],dispatch(selector,slots,i=>fields.map(field=>A(field,name(i,field)))));
+}
 function jointSolve() {
   if (!JOINTS.length) return [];
   const ids=rig.jointOrder;
@@ -367,11 +383,11 @@ function jointSolve() {
     pick('t.ja',ids.map(i=>JOINTS[i].a)),pick('t.jb',ids.map(i=>JOINTS[i].b)),
     A('v.scratch_joint',choose('t.joint_id',ids.map(i=>'v.j'+i))),
     A('t.bounce',0),loadBody('t.da','t.ja'),loadBody('t.db','t.jb'),
-    ...['a','b'].flatMap(side=>[
+    jointGeometry(['a','b'].flatMap(side=>[
       ...axes.map(k=>A('t.local'+k,'v.scratch_joint.'+side+k+'*16')),
       ...quat.map(k=>A('t.jq'+k,choose('t.j'+side,BODIES.map((_,i)=>'v.b'+i+'q'+k)))),
       rotate('t.r'+side,'t.jq','t.local'),
-    ]),
+    ]),['a','b'].flatMap(side=>axes.map(k=>'t.r'+side+k)),'anchor'),
     A('t.relax',16/17),A('t.eps',4/(1/60*1/60*1e7*17)),A('t.stiff',240/17),A('t.lower',-1e6),A('t.upper',1e6),
     A('t.row',0),Loop(3,[
       vector('t.n',axes.map((l,i)=>'t.row=='+i)),cross('t.ga','t.ra','t.n'),scale('t.ga','t.ga',-1),cross('t.gb','t.rb','t.n'),
@@ -380,6 +396,7 @@ function jointSolve() {
       A('t.row','t.row+1'),
     ]),A('t.upper',0),
     angular([A('t.twist',0),Loop(2,[
+      ...(ITERATIONS>1?[A('t.constraint','t.joint_id*2+t.twist')]:[]),jointGeometry([
       ...['a','b'].flatMap(side=>[
         ...axes.map((k,n)=>pick('t.local'+k,ids.map(i=>'t.twist?('+JOINTS[i]['twistAxis'+side.toUpperCase()][n]+'):('+JOINTS[i]['axis'+side.toUpperCase()][n]+')'))),
         ...quat.map(k=>A('t.jq'+k,choose('t.j'+side,BODIES.map((_,i)=>'v.b'+i+'q'+k)))),
@@ -389,6 +406,7 @@ function jointSolve() {
       pick('t.limit',ids.map(i=>'t.twist?('+JOINTS[i].twist+'):('+JOINTS[i].swing+')')),
       A('t.initial_limit','t.twist?v.scratch_joint.twist:v.scratch_joint.swing'),
       A('t.g','math.cos(t.limit+math.max(0,t.initial_limit-t.limit)*math.max(0,1-v.age/'+settings.poseTransition+'))-('+dot('t.axis_a','t.axis_b')+')'),
+      ],[...['ga','gb'].flatMap(side=>axes.map(k=>'t.'+side+k)),'t.g'],'angle','t.constraint',JOINTS.length*2),
       A('t.lambda','t.twist?v.scratch_joint.l4:v.scratch_joint.l3'),equation('t.lambda',true),If('t.twist',A('v.scratch_joint.l4','t.lambda'),A('v.scratch_joint.l3','t.lambda')),
       A('t.twist','t.twist+1'),
     ])]),saveDelta('t.da','t.ja'),saveDelta('t.db','t.jb'),dispatch('t.joint_id',ids,i=>A('v.j'+i,'v.scratch_joint'))]),A('t.joint_id','t.joint_id+1'),

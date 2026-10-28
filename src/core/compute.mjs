@@ -6,6 +6,16 @@ import {splitStatements} from './chunks.mjs';
 const profile='v.compute_profile',slot='v.compute_step';
 const flatten=nodes=>[nodes].flat(Infinity);
 const boneSize=(body,i)=>body.parent<0?`(1-v.pose${i}hidden)*v.body_to_world/v.frame_to_world`:`1-v.pose${i}hidden`;
+function prepareOutputs(entries){
+  return entries.map(entry=>{
+    const roots=entry.rig.bodies.flatMap((body,i)=>body.parent<0?entry.rootOutputs[i]:[]);
+    // Physics and interpolation finish before any bone channel reads the result.
+    // Keep raw programs unchanged: the preview already evaluates each root once.
+    return {...entry,frameChunks:[...entry.frameChunks.slice(0,-1),[
+      ...entry.frameChunks.at(-1),...(roots.length?[If('v.active',roots)]:[]),
+    ]]};
+  });
+}
 function assigned(nodes){
   const names=new Set();
   const visit=nodes=>{for(const n of flatten(nodes)){
@@ -26,10 +36,10 @@ export function sharingKey(rig){
 
 // Specialized schedules remain useful when a shared kernel would be larger.
 export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
+  entries=prepareOutputs(entries);
   const step=mergeGroups(entries.map(e=>e.frameChunks[1][0].yes),profile);
   const resets=[A(slot,0)];
-  const all=[entries.map(e=>[e.initialize,e.frameChunks[0],e.frameChunks.at(-1),
-    e.rig.bodies.flatMap((b,i)=>b.parent<0?Array.from({length:6},()=>e.rootOutputs[i]):[])]),
+  const all=[entries.map(e=>[e.initialize,e.frameChunks[0],e.frameChunks.at(-1)]),
     step,resets,A(profile,0)];
   const frequencyText=emit(all),written=assigned(all);
   const external=[...frequencyText.matchAll(/(?<![\w.])v\.\w+/g)].map(m=>m[0]).filter(n=>!written.has(n));
@@ -79,7 +89,7 @@ export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
     const animation=(target='molang')=>({loop:true,override_previous_animation:true,bones:Object.fromEntries(rig.bodies.map((body,i)=>[body.bone,{
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
-        return body.parent<0?source(rootOutputs[i],target)+'return '+value+';':value;
+        return value;
       })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks,rootOutputs,source,animation,names:namespace.roots,
@@ -93,6 +103,7 @@ export function compileSpecializedPrograms(entries,{reservedNames=[]}={}){
 // All actors use the same ordered animations, but keep their own parameters and
 // simulation state. Only the per-bone render expressions stay entity specific.
 export function compilePrograms(entries,{reservedNames=[]}={}){
+  entries=prepareOutputs(entries);
   const merger=parameterMerger(profile),ready='v.compute_ready';
   const maps=entries.map(e=>new Map(flatten(e.initialize).map(n=>{
     if(n.kind!=='set')throw new Error('Expected assignment-only physics initialization');
@@ -131,7 +142,7 @@ export function compilePrograms(entries,{reservedNames=[]}={}){
     const animation=(target='molang')=>({loop:true,override_previous_animation:true,bones:Object.fromEntries(rig.bodies.map((body,i)=>[body.bone,{
       ...Object.fromEntries([['position','p'],['rotation','r']].map(([channel,kind])=>[channel,axes.map(k=>{
         const name=`v.out${i}${kind}${k}`,value=target==='molang'?namespace(name):name;
-        return body.parent<0?source(rootOutputs[i],target)+'return '+value+';':value;
+        return value;
       })])),scale:axes.map(()=>target==='molang'?namespace(boneSize(body,i)):boneSize(body,i)),
     }]))});
     return {initialize:initializeChunks.flat(),frameChunks:execution.map(c=>c.nodes),rootOutputs,source,animation,names:namespace.roots,
